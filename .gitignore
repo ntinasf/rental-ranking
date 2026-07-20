@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+
+# Notebooks
+.ipynb_checkpoints/
+
+# Environment / secrets
+.env
+
+# Azure credentials and workspace config
+.azure/
+.azureml/
+config.json
+
+# Experiment tracking
+mlruns/
+
+# Data is never committed (keep only .gitkeep placeholders)
+data/*
+!data/raw
+data/raw/*
+!data/raw/.gitkeep
+!data/processed
+data/processed/*
+!data/processed/.gitkeep
+
+# OS
+.DS_Store
+
+# Personal working notes (untracked by choice)
+claude_code_prompt.md
+rules_of_ml.md

@@ -1,0 +1,30 @@
+# Azure ML command job: LambdaMART training.
+# Thin wrapper over src/rental_ranking/train/lambdamart.py — no logic lives here.
+#
+# Submit with:
+#   az ml job create -f pipelines/train_job.yml
+# (after `az login` and `az configure --defaults group=<rg> workspace=<ws>`,
+#  or pass --resource-group / --workspace-name explicitly).
+#
+# Structure to fill in once training exists:
+#
+# $schema: https://azuremlschemas.azureedge.net/latest/commandJob.schema.json
+# type: command
+# display_name: lambdamart-train
+# experiment_name: rental-ranking
+#
+# code: ../src                       # uploaded snapshot; keep src importable
+# command: >-
+#   python -m rental_ranking.train.lambdamart
+#   --features ${{inputs.features}}
+#
+# inputs:
+#   features:
+#     type: uri_file                 # versioned feature-table data asset
+#     path: azureml:features@latest
+#
+# environment: azureml:AzureML-sklearn-1.5@latest   # or a custom env with lightgbm + mlflow
+# compute: azureml:cpu-cluster                      # small CPU cluster, min nodes 0
+#
+# MLflow autologging picks up the run; log the dataset version as a run tag
+# (see BUILD_GUIDE Phase 3 gotchas).

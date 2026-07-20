@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=$(python3 -c 'import json,sys; print(json.load(sys.stdin).get(\"tool_input\",{}).get(\"file_path\",\"\"))'); case \"$f\" in *src/rental_ranking/*) cd \"$CLAUDE_PROJECT_DIR\" || exit 2; command -v pytest >/dev/null 2>&1 || { echo 'guardrail hook: pytest not installed, skipping tests' >&2; exit 0; }; pytest tests/ -q >&2 || exit 2;; esac"
+          }
+        ]
+      }
+    ]
+  }
+}
