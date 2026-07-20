@@ -7,7 +7,7 @@ name = "rental-ranking"
 version = "0.1.0"
 description = "Two-stage search ranking (retrieval -> ranking) for short-term rental listings using Inside Airbnb data, on Azure ML."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "pandas",
     "numpy",
@@ -15,9 +15,14 @@ dependencies = [
     "lightgbm",
     "mlflow",
     "azure-ai-ml",
-    "pytest",
     "matplotlib",
     "seaborn",
+]
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "ruff",
 ]
 
 [tool.setuptools.packages.find]
@@ -25,3 +30,9 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+extend-select = ["I"]

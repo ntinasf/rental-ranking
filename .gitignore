@@ -38,3 +38,4 @@ data/processed/*
 # Personal working notes (untracked by choice)
 claude_code_prompt.md
 rules_of_ml.md
+NEXT_STEPS.md

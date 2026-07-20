@@ -23,8 +23,10 @@
 #     type: uri_file                 # versioned feature-table data asset
 #     path: azureml:features@latest
 #
-# environment: azureml:AzureML-sklearn-1.5@latest   # or a custom env with lightgbm + mlflow
-# compute: azureml:cpu-cluster                      # small CPU cluster, min nodes 0
+# environment:                       # built from the conda manifest in this folder;
+#   image: mcr.microsoft.com/azureml/openmpi4.1.0-ubuntu22.04:latest
+#   conda_file: environment.yml      # Azure registers and versions it on first submission
+# compute: azureml:cpu-cluster       # small CPU cluster, min nodes 0
 #
 # MLflow autologging picks up the run; log the dataset version as a run tag
 # (see BUILD_GUIDE Phase 3 gotchas).

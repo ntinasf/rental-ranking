@@ -1,0 +1,22 @@
+# Azure ML training-job environment — the cloud counterpart of the local uv env.
+# Referenced from train_job.yml (image + conda_file). This file is never used
+# locally: local environments are managed by uv (uv sync / uv.lock). Conda YAML
+# is simply the manifest format Azure ML builds the job image from.
+#
+# Before the first job submission:
+#   1. Pin exact versions from uv.lock so cloud training matches local.
+#   2. Uncomment azureml-mlflow (required for MLflow tracking against the workspace).
+# Training deps only — no dev tooling, no plotting libraries.
+name: rental-ranking-train
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - pip:
+      - pandas
+      - numpy
+      - scikit-learn
+      - lightgbm
+      - mlflow
+      # - azureml-mlflow  # workspace MLflow tracking

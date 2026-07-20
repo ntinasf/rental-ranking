@@ -1,4 +1,8 @@
 # Decisions log
 
 | Date | Decision | Alternatives | Reason |
-|---|---|---|---|
+| --- | --- | --- | --- |
+| 2026-07-20 | Local-first compute: all development, exploration, and training on the local machine; Azure ML used to demonstrate the cloud workflow (one command job, versioned data assets, endpoint deploy→demo→teardown) | Cloud-first with a compute instance for daily work | Data fits in memory locally; faster iteration; near-zero cost; Azure knowledge still demonstrated where it counts |
+| 2026-07-20 | uv for environment and package management (committed uv.lock, .python-version 3.11); pipelines/environment.yml is a conda-format manifest used only to build the Azure job image, pinned from uv.lock before submission | conda everywhere; pip + requirements.txt | User's standard tooling; lockfile reproducibility; no non-Python binary deps that would require conda; conda YAML is just Azure's manifest format |
+| 2026-07-20 | ruff for lint + format (dev dependency group) with a minimal GitHub Actions CI (ruff check, format check, pytest); no CD to Azure | flake8/black/isort stack; CD pipeline with service principal | One fast tool; CI as engineering signal; CD would need repo secrets and endpoints are torn down by design |
+| 2026-07-20 | One-time Azure infra provisioned via portal/CLI and recorded as commands in docs/azure_setup.md; ML-plane assets (data, environment, jobs, endpoints) stay code-first in pipelines/ | Terraform/Bicep IaC; undocumented portal clicks | IaC is out of scope for a DS portfolio; recorded commands keep reproducibility; code-first ML assets are the competency being demonstrated |
