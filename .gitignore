@@ -39,3 +39,5 @@ data/processed/*
 claude_code_prompt.md
 rules_of_ml.md
 NEXT_STEPS.md
+docs/azure_cli_cheatsheet.md
+data_preprocessing.py
