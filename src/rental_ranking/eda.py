@@ -92,7 +92,9 @@ def analyze_numeric_variable(
     ax = axes[0, 0]
     ax.hist(clean, bins=30, alpha=0.7, color="skyblue", edgecolor="black")
     ax.axvline(stats["mean"], color="red", ls="--", lw=2, label=f"Mean: {stats['mean']:.2f}")
-    ax.axvline(stats["median"], color="green", ls="--", lw=2, label=f"Median: {stats['median']:.2f}")
+    ax.axvline(
+        stats["median"], color="green", ls="--", lw=2, label=f"Median: {stats['median']:.2f}"
+    )
     ax.set_xlabel(name)
     ax.set_ylabel("Frequency")
     ax.set_title(f"Histogram of {name}")

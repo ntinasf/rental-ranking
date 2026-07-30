@@ -15,28 +15,27 @@ from pathlib import Path
 from urllib.parse import urlparse
 from urllib.request import urlretrieve
 
-OUTPUT_DIR = Path(__file__).resolve().parents[3] / "data" / "raw"
-
+from rental_ranking.data.paths import RAW_DIR
 
 THESSALONIKI_URLS = {
     "listings": "https://data.insideairbnb.com/greece/central-macedonia/thessaloniki/2026-06-29/data/listings.csv.gz",
     "calendar": "https://data.insideairbnb.com/greece/central-macedonia/thessaloniki/2026-06-29/data/calendar.csv.gz",
     "reviews": "https://data.insideairbnb.com/greece/central-macedonia/thessaloniki/2026-06-29/data/reviews.csv.gz",
-    "neighborhoods": "https://data.insideairbnb.com/greece/central-macedonia/thessaloniki/2026-06-29/visualisations/neighbourhoods.csv",
+    "neighbourhoods": "https://data.insideairbnb.com/greece/central-macedonia/thessaloniki/2026-06-29/visualisations/neighbourhoods.csv",
 }
 
 ATHENS_URLS = {
     "listings": "https://data.insideairbnb.com/greece/attica/athens/2026-06-28/data/listings.csv.gz",
     "calendar": "https://data.insideairbnb.com/greece/attica/athens/2026-06-28/data/calendar.csv.gz",
     "reviews": "https://data.insideairbnb.com/greece/attica/athens/2026-06-28/data/reviews.csv.gz",
-    "neighborhoods": "https://data.insideairbnb.com/greece/attica/athens/2026-06-28/visualisations/neighbourhoods.csv",
+    "neighbourhoods": "https://data.insideairbnb.com/greece/attica/athens/2026-06-28/visualisations/neighbourhoods.csv",
 }
 
 CRETE_URLS = {
     "listings": "https://data.insideairbnb.com/greece/crete/crete/2026-06-29/data/listings.csv.gz",
     "calendar": "https://data.insideairbnb.com/greece/crete/crete/2026-06-29/data/calendar.csv.gz",
     "reviews": "https://data.insideairbnb.com/greece/crete/crete/2026-06-29/data/reviews.csv.gz",
-    "neighborhoods": "https://data.insideairbnb.com/greece/crete/crete/2026-06-29/visualisations/neighbourhoods.csv",
+    "neighbourhoods": "https://data.insideairbnb.com/greece/crete/crete/2026-06-29/visualisations/neighbourhoods.csv",
 }
 
 
@@ -74,7 +73,7 @@ def write_manifest(city: str, snapshot_date: str, files: list[dict[str, str | in
         "files": files,
     }
 
-    manifest_path = OUTPUT_DIR / city / snapshot_date / "manifest.json"
+    manifest_path = RAW_DIR / city / snapshot_date / "manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
 
 
@@ -83,21 +82,29 @@ def download_snapshot(city: str, snapshot_date: str, files: dict[str, str]) -> l
     entries = []
     for file_type, url in files.items():
         source_name = Path(urlparse(url).path).name
-        destination = OUTPUT_DIR / city / snapshot_date / source_name
+        destination = RAW_DIR / city / snapshot_date / source_name
         destination.parent.mkdir(parents=True, exist_ok=True)
         if not destination.exists():
             partial = destination.with_name(destination.name + ".part")
             urlretrieve(url, partial)
             partial.rename(destination)
-        entries.append({"type": file_type, "filename": destination.name, "url": url,
-                        "size_bytes": destination.stat().st_size,
-                        "sha256": calculate_sha256(destination)})
+        entries.append(
+            {
+                "type": file_type,
+                "filename": destination.name,
+                "url": url,
+                "size_bytes": destination.stat().st_size,
+                "sha256": calculate_sha256(destination),
+            }
+        )
     return entries
 
 
 def main() -> None:
     for city, snapshot in SNAPSHOTS.items():
-        write_manifest(city, snapshot["as_of"], download_snapshot(city, snapshot["as_of"], snapshot["files"]))
+        write_manifest(
+            city, snapshot["as_of"], download_snapshot(city, snapshot["as_of"], snapshot["files"])
+        )
 
 
 if __name__ == "__main__":

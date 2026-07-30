@@ -36,6 +36,7 @@ data/processed/*
 .DS_Store
 
 # Personal working notes (untracked by choice)
+ENGINEERING_LESSONS.md
 claude_code_prompt.md
 rules_of_ml.md
 NEXT_STEPS.md
