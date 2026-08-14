@@ -460,3 +460,19 @@ def _no_warning():
         warnings.simplefilter("always")
         yield
     assert not caught, f"unexpected warning(s): {[str(w.message) for w in caught]}"
+
+
+def test_clean_listings_types_the_quote_dates(listings: pd.DataFrame) -> None:
+    """Label-adjacent, but still dates: notebook 02 subtracts T from the check-in date."""
+    listings["price_quote_checkin_date"] = ["2026-06-29", "2026-10-31", None]
+    listings["price_quote_checkout_date"] = ["2026-07-01", "2026-11-02", None]
+    out = clean.clean_listings(listings, CITY)
+
+    assert out["price_quote_checkin_date"].dtype == "datetime64[ns]"
+    assert out["price_quote_checkout_date"].dtype == "datetime64[ns]"
+    assert out["price_quote_checkin_date"].iloc[1] == pd.Timestamp("2026-10-31")
+
+
+def test_quote_dates_remain_banned_as_features() -> None:
+    """Typing them changes nothing about their disposition — they stay label-adjacent."""
+    assert {"price_quote_checkin_date", "price_quote_checkout_date"} <= cols.LABEL_ADJACENT_COLUMNS

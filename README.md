@@ -12,9 +12,9 @@ a command job, an endpoint demo). This README grows with the project — see
 
 - `notebooks/` — numbered narrative notebooks (data inventory, label validation, feature analysis, evaluation); they import from `src/` and never duplicate logic
 - `src/rental_ranking/data/` — acquisition, anonymization, typing and the raw → processed build (complete)
-- `src/rental_ranking/` — label and feature construction, training, evaluation
+- `src/rental_ranking/` — label and feature construction, training, evaluation (Phase 1 onward)
 - `pipelines/` — Azure ML job and pipeline YAML
-- `tests/` — unit tests per module; 203 passing
+- `tests/` — unit tests per module; 257 passing
 - `docs/` — build guide, data dictionary, data-pipeline contract, decisions log, A/B test design
 - `data/` — local data, gitignored
 

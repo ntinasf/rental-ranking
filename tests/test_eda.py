@@ -103,3 +103,99 @@ def test_analyze_numerical_numerical_recovers_relationship(df):
     assert stats["pearson_r"] > 0.5
     assert stats["significant"] is True
     assert 0 <= stats["r_squared"] <= 1
+
+
+def test_plot_binned_relationship_returns_per_group_stats() -> None:
+    rng = np.random.default_rng(0)
+    x = pd.Series(rng.exponential(20, 600), name="lead days")
+    y = pd.Series(x / 100 + rng.normal(0, 0.05, 600), name="blocked fraction")
+    group = pd.Series(rng.choice(["a", "b"], 600), name="city")
+
+    fig, stats = eda.plot_binned_relationship(x, y, group=group)
+
+    assert isinstance(fig, matplotlib.figure.Figure)
+    assert set(stats["groups"]) == {"a", "b"}
+    assert stats["groups"]["a"]["spearman_rho"] > 0.8  # y is built monotone in x
+    assert sum(stats["groups"][g]["n"] for g in stats["groups"]) == stats["n_observations"]
+    plt.close(fig)
+
+
+def test_plot_binned_relationship_works_without_a_group() -> None:
+    x = pd.Series(np.arange(100.0), name="x")
+    fig, stats = eda.plot_binned_relationship(x, x * 2)
+    assert list(stats["groups"]) == ["all"]
+    plt.close(fig)
+
+
+def test_plot_binned_relationship_refuses_a_fourth_series() -> None:
+    """The palette validates for three; a fourth hue would fail CVD separation."""
+    x = pd.Series(np.arange(80.0), name="x")
+    group = pd.Series(["a", "b", "c", "d"] * 20, name="g")
+    with pytest.raises(ValueError, match="palette cap"):
+        eda.plot_binned_relationship(x, x * 2, group=group)
+
+
+def test_plot_binned_relationship_needs_enough_observations() -> None:
+    with pytest.raises(ValueError, match="at least 3"):
+        eda.plot_binned_relationship(pd.Series([1.0]), pd.Series([2.0]))
+
+
+def test_discrete_distribution_renders_every_attainable_level() -> None:
+    """Unobserved values must appear as zeros — a missing level would close a visible gap."""
+    values = pd.Series([0, 0, 5, 5, 5, 10], name="blocked_days")
+    fig, stats = eda.plot_discrete_distribution(values, levels=range(11))
+    assert stats["levels"] == 11
+    assert stats["groups"]["all"]["distinct_values"] == 3
+    plt.close(fig)
+
+
+def test_discrete_distribution_reports_the_share_at_each_atom() -> None:
+    values = pd.Series([0] * 10 + [5] * 80 + [10] * 10, name="v")
+    _, stats = eda.plot_discrete_distribution(values, levels=range(11), highlight=(0, 10))
+    assert stats["groups"]["all"]["share_at"] == {0: 10.0, 10: 10.0}
+
+
+def test_discrete_distribution_counts_on_integers_not_the_scaled_axis() -> None:
+    """x_divisor is display-only: rescaling must not perturb the counted shares."""
+    values = pd.Series([0] * 5 + [90] * 5, name="v")
+    _, plain = eda.plot_discrete_distribution(values, levels=range(91), highlight=(0, 90))
+    _, scaled = eda.plot_discrete_distribution(
+        values, levels=range(91), highlight=(0, 90), x_divisor=90
+    )
+    assert plain["groups"]["all"]["share_at"] == scaled["groups"]["all"]["share_at"]
+
+
+def test_discrete_distribution_refuses_a_fourth_series() -> None:
+    values = pd.Series(list(range(8)), name="v")
+    group = pd.Series(["a", "b", "c", "d"] * 2, name="g")
+    with pytest.raises(ValueError, match="palette cap"):
+        eda.plot_discrete_distribution(values, group=group)
+
+
+def test_group_composition_normalises_each_bucket_to_one_hundred() -> None:
+    """Bucket sizes differ by orders of magnitude; raw counts would hide the small ones."""
+    category = pd.Series(["big"] * 90 + ["small"] * 10, name="bucket")
+    breakdown = pd.Series(["x"] * 45 + ["y"] * 45 + ["x"] * 2 + ["y"] * 8, name="cohort")
+    _, stats = eda.plot_group_composition(category, breakdown)
+    panel = stats["panels"]["all"]
+    assert panel["sizes"] == {"big": 90, "small": 10}
+    assert panel["composition_pct"]["x"]["small"] == 20.0
+    assert panel["composition_pct"]["y"]["small"] == 80.0
+
+
+def test_group_composition_facets_without_dropping_empty_buckets() -> None:
+    """A bucket empty in one panel must still hold its slot, or panels stop being comparable."""
+    category = pd.Series(pd.Categorical(["a", "b", "a", "a"], categories=["a", "b", "c"]))
+    category.name = "bucket"
+    breakdown = pd.Series(["x", "y", "x", "y"], name="cohort")
+    group = pd.Series(["p1", "p1", "p2", "p2"], name="city")
+    _, stats = eda.plot_group_composition(category, breakdown, group=group)
+    assert set(stats["panels"]) == {"p1", "p2"}
+    assert stats["panels"]["p2"]["sizes"] == {"a": 2, "b": 0, "c": 0}
+
+
+def test_group_composition_refuses_a_fourth_breakdown_level() -> None:
+    category = pd.Series(["a", "b"] * 4, name="bucket")
+    breakdown = pd.Series(["w", "x", "y", "z"] * 2, name="cohort")
+    with pytest.raises(ValueError, match="palette cap"):
+        eda.plot_group_composition(category, breakdown)

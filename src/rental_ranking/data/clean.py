@@ -29,7 +29,16 @@ _BOOLEAN_TOKENS = {"t": True, "f": False}
 _LISTINGS_BOOLEAN_COLUMNS = ("host_is_superhost", "host_has_profile_pic", "host_identity_verified")
 
 #: The listings date columns, all ISO-formatted. ``last_scraped`` becomes ``scrape_date``.
-_LISTINGS_DATE_COLUMNS = ("last_scraped", "first_review", "last_review")
+#: The two ``price_quote_*`` dates are typed like any other date even though they are
+#: label-adjacent and banned as features: notebook 02 subtracts T from the check-in date to
+#: measure the leak, and leaving them as strings pushes that parse into every consumer.
+_LISTINGS_DATE_COLUMNS = (
+    "last_scraped",
+    "first_review",
+    "last_review",
+    "price_quote_checkin_date",
+    "price_quote_checkout_date",
+)
 
 _DATE_FORMAT = "%Y-%m-%d"
 

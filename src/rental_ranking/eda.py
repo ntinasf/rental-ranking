@@ -14,6 +14,8 @@ Example:
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Sequence
+
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -36,7 +38,15 @@ __all__ = [
     "analyze_categorical_categorical",
     "analyze_categorical_numerical",
     "analyze_numerical_numerical",
+    "plot_binned_relationship",
+    "plot_discrete_distribution",
+    "plot_group_composition",
 ]
+
+#: Categorical series colours, assigned in fixed order and never cycled. Validated for
+#: colour-vision deficiency on the all-pairs list (worst deutan dE 9.2, normal-vision
+#: 24.0), which caps this palette at three series — past that, facet, never add a hue.
+_SERIES_COLORS = ("#2a78d6", "#eb6834", "#1baf7a")
 
 _SHAPIRO_MAX_N = 5000  # Shapiro-Wilk is unreliable/warns above this sample size
 
@@ -638,4 +648,382 @@ def analyze_numerical_numerical(
     ax.grid(alpha=0.3)
 
     fig.tight_layout()
+    return fig, stats
+
+
+def plot_binned_relationship(
+    x_data: pd.Series,
+    y_data: pd.Series,
+    group: pd.Series | None = None,
+    bins: list[float] | None = None,
+    figsize: tuple[float, float] = (9, 6.5),
+    title: str | None = None,
+    subtitle: str | None = None,
+    xlabel: str | None = None,
+    ylabel: str | None = None,
+    caption: str | None = None,
+) -> tuple[plt.Figure, dict]:
+    """Median of ``y`` against binned ``x``, one line per group, with an IQR band.
+
+    For the case a scatter cannot serve: tens of thousands of points, a heavily skewed
+    ``x``, and a monotone relationship a point cloud would bury. Binning ``x`` and plotting
+    the per-bin median makes the shape legible; the interquartile band keeps the spread
+    visible, so the line is not mistaken for a fit.
+
+    A second panel carries the per-bin counts. Unequal bin occupancy is the standard way a
+    binned plot misleads — a dramatic-looking tail bin may hold twelve rows — and a shared
+    x-axis shows that without resorting to a second y-scale on the same panel.
+
+    Args:
+        x_data: Numeric series to bin along the x-axis.
+        y_data: Numeric series summarised per bin.
+        group: Optional categorical series; at most three levels, the validated palette cap.
+        bins: Bin edges. Defaults to deciles of ``x``, which suit a skewed distribution far
+            better than equal-width bins.
+        figsize: Figure size.
+        title: Headline. Default is the column names, which is only ever adequate for a
+            throwaway look — a figure that leaves the notebook should state its *finding*
+            here, since the surrounding prose does not travel with the image.
+        subtitle: One line under the title, for what was measured over what population.
+        xlabel: Overrides the x column name. Define the term rather than naming it.
+        ylabel: Overrides the y column name. Say which direction is which.
+        caption: Small footnote under the axes — effect sizes, sample size, exclusions.
+
+    Returns:
+        (fig, stats) — stats holds the Spearman rho and p-value per group (rank-based, so a
+        monotone but non-linear relationship is measured honestly), plus the per-bin medians
+        and counts and the number of complete observations.
+
+    Raises:
+        ValueError: If fewer than 3 complete observations remain, or more than three groups
+            are passed.
+    """
+    x_name = _series_name(x_data, "X Variable")
+    y_name = _series_name(y_data, "Y Variable")
+
+    columns = {x_name: x_data, y_name: y_data}
+    group_name = None
+    if group is not None:
+        group_name = _series_name(group, "Group")
+        columns[group_name] = group
+    combined = pd.DataFrame(columns).dropna()
+    if len(combined) < 3:
+        raise ValueError(f"Need at least 3 complete observations, found {len(combined)}.")
+
+    if group_name is None:
+        group_name = "_group"
+        combined[group_name] = "all"
+    levels = sorted(combined[group_name].unique())
+    if len(levels) > len(_SERIES_COLORS):
+        raise ValueError(
+            f"{len(levels)} groups exceeds the {len(_SERIES_COLORS)}-series palette cap; "
+            "facet into small multiples instead of adding hues."
+        )
+
+    if bins is None:
+        bins = list(np.unique(np.quantile(combined[x_name], np.linspace(0, 1, 11))))
+    combined["_bin"] = pd.cut(combined[x_name], bins=bins, include_lowest=True, duplicates="drop")
+    centres = combined.groupby("_bin", observed=True)[x_name].median()
+
+    fig, (ax, ax_counts) = plt.subplots(
+        2, 1, figsize=figsize, sharex=True, height_ratios=[3, 1], constrained_layout=True
+    )
+    stats: dict = {"n_observations": len(combined), "groups": {}}
+
+    drawn: dict = {}
+    for colour, level in zip(_SERIES_COLORS, levels, strict=False):
+        subset = combined[combined[group_name] == level]
+        grouped = subset.groupby("_bin", observed=True)[y_name]
+        quartiles = grouped.quantile([0.25, 0.75]).unstack()
+        summary = grouped.agg(["median", "count"]).join(
+            quartiles.rename(columns={0.25: "q1", 0.75: "q3"})
+        )
+        summary = summary[summary["count"] > 0]
+        x_at = centres.reindex(summary.index)
+        drawn[level] = (colour, x_at, summary)
+
+        ax.fill_between(x_at, summary["q1"], summary["q3"], color=colour, alpha=0.13, linewidth=0)
+        ax.plot(x_at, summary["median"], color=colour, linewidth=2, marker="o", markersize=5)
+        ax_counts.plot(x_at, summary["count"], color=colour, linewidth=1.5, alpha=0.85)
+
+        rho, p_value = spearmanr(subset[x_name], subset[y_name])
+        stats["groups"][str(level)] = {
+            "spearman_rho": float(rho),
+            "spearman_p": float(p_value),
+            "n": int(len(subset)),
+            "bin_medians": summary["median"].round(4).to_dict(),
+            "bin_counts": summary["count"].astype(int).to_dict(),
+        }
+
+    # Direct labels rather than a legend box: identity never rests on colour alone, and this
+    # discharges the palette's contrast warning on the lighter series. They are placed at the
+    # bin where the series are furthest apart, not at the line end — converging lines (which
+    # is exactly what a leak plot looks like) would stack every label on the same point.
+    medians = pd.DataFrame({level: summary["median"] for level, (_, _, summary) in drawn.items()})
+    anchor = (medians.max(axis=1) - medians.min(axis=1)).idxmax()
+    for level, (colour, x_at, summary) in drawn.items():
+        if anchor not in summary.index:
+            continue
+        ax.annotate(
+            str(level),
+            xy=(x_at.loc[anchor], summary.loc[anchor, "median"]),
+            xytext=(0, 9),
+            textcoords="offset points",
+            color=colour,
+            fontsize=10,
+            fontweight="bold",
+            ha="center",
+        )
+
+    ax.set_ylabel(ylabel or f"{y_name}\n(median, IQR band)")
+    ax.set_title(
+        title or f"{y_name} vs {x_name}",
+        fontsize=13,
+        fontweight="bold",
+        loc="left",
+        pad=32 if subtitle else 12,
+    )
+    if subtitle:
+        ax.text(0, 1.02, subtitle, transform=ax.transAxes, fontsize=10, color="#555", va="bottom")
+    ax.grid(True, alpha=0.25, linewidth=0.6)
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.margins(x=0.09)
+
+    ax_counts.set_ylabel("listings")
+    ax_counts.set_xlabel(xlabel or x_name)
+    if caption:
+        ax_counts.text(
+            0, -0.55, caption, transform=ax_counts.transAxes, fontsize=8.5, color="#666", va="top"
+        )
+    ax_counts.set_yscale("log")
+    ax_counts.grid(True, alpha=0.25, linewidth=0.6)
+    ax_counts.spines[["top", "right"]].set_visible(False)
+
+    return fig, stats
+
+
+def plot_discrete_distribution(
+    values: pd.Series,
+    group: pd.Series | None = None,
+    levels: Iterable[int] | None = None,
+    highlight: Sequence[int] = (),
+    x_divisor: float = 1.0,
+    figsize: tuple[float, float] = (11, 5.5),
+    title: str | None = None,
+    xlabel: str | None = None,
+) -> tuple[plt.Figure, dict]:
+    """Share of each *exact* value of a discrete variable, one line per group.
+
+    For a variable that only looks continuous. A histogram or KDE bins across the values
+    and smears point masses into their neighbours — which is fatal when the point masses
+    are the thing under inspection. Plotting every attainable value is exact: there is no
+    bin width to defend, and an atom appears as the vertical jump it is.
+
+    Counting happens on the integer values, so equality is never a floating-point question;
+    ``x_divisor`` only rescales the axis for display (pass 90 to read a count of 0-90 days
+    as a fraction of a 90-day window).
+
+    Args:
+        values: Discrete integer-valued series.
+        group: Optional categorical series; at most three levels, the validated palette cap.
+        levels: The complete set of attainable values, so unobserved ones render as zero
+            rather than vanishing. Defaults to every integer between the observed min and max.
+        highlight: Values to mark with a dot and a share annotation — the suspected atoms.
+        x_divisor: Divides the x axis for display only. Counting is unaffected.
+        figsize: Figure size.
+        title: Plot title.
+        xlabel: X axis label.
+
+    Returns:
+        (fig, stats) — stats holds, per group, the observation count, how many distinct
+        values were actually attained, and the percentage share sitting at each highlighted
+        value.
+
+    Raises:
+        ValueError: If no complete observations remain, or more than three groups are passed.
+    """
+    value_name = _series_name(values, "value")
+    columns = {value_name: values}
+    group_name = None
+    if group is not None:
+        group_name = _series_name(group, "Group")
+        columns[group_name] = group
+    combined = pd.DataFrame(columns).dropna()
+    if combined.empty:
+        raise ValueError("No complete observations to plot.")
+
+    if group_name is None:
+        group_name = "_group"
+        combined[group_name] = "all"
+    group_levels = sorted(combined[group_name].unique())
+    if len(group_levels) > len(_SERIES_COLORS):
+        raise ValueError(
+            f"{len(group_levels)} groups exceeds the {len(_SERIES_COLORS)}-series palette cap; "
+            "facet into small multiples instead of adding hues."
+        )
+
+    counted = combined[value_name].astype("int64")
+    combined[value_name] = counted
+    grid = (
+        list(levels)
+        if levels is not None
+        else list(range(int(counted.min()), int(counted.max()) + 1))
+    )
+
+    fig, ax = plt.subplots(figsize=figsize, constrained_layout=True)
+    stats: dict = {"n_observations": len(combined), "levels": len(grid), "groups": {}}
+
+    for rank, (colour, level) in enumerate(zip(_SERIES_COLORS, group_levels, strict=False)):
+        subset = combined.loc[combined[group_name] == level, value_name]
+        share = subset.value_counts(normalize=True).reindex(grid, fill_value=0.0).sort_index() * 100
+        ax.plot(
+            [x / x_divisor for x in share.index],
+            share.to_numpy(),
+            color=colour,
+            linewidth=1.4,
+            alpha=0.9,
+            label=str(level),
+        )
+
+        marked = {}
+        for value in highlight:
+            if value not in share.index:
+                continue
+            at = float(share.loc[value])
+            marked[value] = round(at, 3)
+            ax.plot(value / x_divisor, at, "o", color=colour, markersize=9, zorder=5)
+            # Stagger the vertical offset per series: at an atom the lines converge, so a
+            # fixed offset would stack every label on the same few pixels.
+            leading = value == min(highlight)
+            ax.annotate(
+                f"{at:.1f}%",
+                xy=(value / x_divisor, at),
+                xytext=(9 if leading else -9, 7 + 11 * rank),
+                textcoords="offset points",
+                ha="left" if leading else "right",
+                color=colour,
+                fontsize=9,
+                fontweight="bold",
+            )
+
+        stats["groups"][str(level)] = {
+            "n": int(len(subset)),
+            "distinct_values": int(subset.nunique()),
+            "share_at": marked,
+        }
+
+    # Annotations are offset in points, which constrained_layout does not account for, so
+    # the topmost label clips without explicit headroom scaled to the number of series.
+    ax.set_ylim(top=ax.get_ylim()[1] * (1.06 + 0.05 * len(group_levels)))
+
+    ax.set_xlabel(xlabel or value_name)
+    ax.set_ylabel("share of the group's observations (%)")
+    ax.set_title(title or f"Distribution of {value_name} over its {len(grid)} attainable values")
+    if group_levels != ["all"]:
+        ax.legend(frameon=False, title=group_name, loc="upper center", ncols=len(group_levels))
+    ax.grid(True, alpha=0.25, linewidth=0.6)
+    ax.spines[["top", "right"]].set_visible(False)
+
+    return fig, stats
+
+
+def plot_group_composition(
+    category: pd.Series,
+    breakdown: pd.Series,
+    group: pd.Series | None = None,
+    figsize: tuple[float, float] = (12, 4.2),
+    title: str | None = None,
+    ylabel: str = "composition of the bucket (%)",
+) -> tuple[plt.Figure, dict]:
+    """Percentage composition of ``breakdown`` within each level of ``category``.
+
+    Answers "who is in this bucket?" rather than "how big is it?". Normalising each bar to
+    100 % is the point: bucket sizes differ by orders of magnitude here, and raw counts
+    would let the largest bucket hide the composition of the interesting small ones.
+
+    ``group`` facets into small multiples with a shared y axis, which is how more than one
+    grouping variable is shown without stacking a second hue dimension onto the palette.
+
+    Args:
+        category: Categorical series defining the bars (bucket membership).
+        breakdown: Categorical series defining the stacked segments; at most three levels.
+        group: Optional categorical series; one panel per level, at most three.
+        figsize: Figure size.
+        title: Figure suptitle.
+        ylabel: Y axis label on the leftmost panel.
+
+    Returns:
+        (fig, stats) — stats holds the per-panel composition percentages and bucket sizes.
+
+    Raises:
+        ValueError: If no complete observations remain, or either categorical exceeds three
+            levels.
+    """
+    category_name = _series_name(category, "category")
+    breakdown_name = _series_name(breakdown, "breakdown")
+    columns = {category_name: category, breakdown_name: breakdown}
+    group_name = None
+    if group is not None:
+        group_name = _series_name(group, "Group")
+        columns[group_name] = group
+    combined = pd.DataFrame(columns).dropna()
+    if combined.empty:
+        raise ValueError("No complete observations to plot.")
+
+    if group_name is None:
+        group_name = "_group"
+        combined[group_name] = "all"
+    panels = sorted(combined[group_name].unique())
+    segments = sorted(combined[breakdown_name].unique())
+    for name, found in ((group_name, panels), (breakdown_name, segments)):
+        if len(found) > len(_SERIES_COLORS):
+            raise ValueError(
+                f"{name} has {len(found)} levels, past the {len(_SERIES_COLORS)}-series "
+                "palette cap; collapse the rare levels or facet instead."
+            )
+
+    buckets = list(pd.Categorical(combined[category_name]).categories)
+    fig, axes = plt.subplots(
+        1, len(panels), figsize=figsize, sharey=True, constrained_layout=True, squeeze=False
+    )
+    stats: dict = {"n_observations": len(combined), "panels": {}}
+
+    for ax, panel in zip(axes[0], panels, strict=True):
+        part = combined[combined[group_name] == panel]
+        counts = (
+            part.groupby([category_name, breakdown_name], observed=False)
+            .size()
+            .unstack(breakdown_name)
+            .reindex(index=buckets, columns=segments)
+            .fillna(0)
+        )
+        share = counts.div(counts.sum(axis=1).replace(0, np.nan), axis=0) * 100
+        bottom = np.zeros(len(share))
+        for colour, segment in zip(_SERIES_COLORS, segments, strict=False):
+            ax.bar(
+                share.index.astype(str),
+                share[segment].fillna(0),
+                bottom=bottom,
+                color=colour,
+                label=str(segment),
+                width=0.62,
+            )
+            bottom += share[segment].fillna(0).to_numpy()
+        ax.set_title(str(panel))
+        ax.grid(True, axis="y", alpha=0.25, linewidth=0.6)
+        ax.spines[["top", "right"]].set_visible(False)
+        ax.tick_params(axis="x", rotation=20)
+        stats["panels"][str(panel)] = {
+            "sizes": counts.sum(axis=1).astype(int).to_dict(),
+            "composition_pct": share.round(2).to_dict(),
+        }
+
+    axes[0][0].set_ylabel(ylabel)
+    handles, labels = axes[0][0].get_legend_handles_labels()
+    fig.legend(
+        handles, labels, frameon=False, fontsize=9, loc="outside lower center", ncols=len(segments)
+    )
+    if title:
+        fig.suptitle(title, fontsize=12)
+
     return fig, stats
