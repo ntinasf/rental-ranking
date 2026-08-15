@@ -39,10 +39,18 @@ def occupancy_label(calendar: pd.DataFrame, window_days: int = LABEL_WINDOW_DAYS
 
     Returns:
         A frame indexed by ``listing_id`` carrying ``T`` (the anchor), ``calendar_days``,
-        ``calendar_span``, ``avail_<window_days>`` (available nights in the window) and
+        ``calendar_span``, ``avail_<window_days>`` (available nights in the window),
         ``blocked_fraction_<window_days>`` — the label, in ``[0, 1]``, where 1.0 means
-        nothing in the window was bookable. Listings absent from ``calendar`` are absent
-        here; the caller's merge is where that surfaces.
+        nothing in the window was bookable — and ``blocked_fraction_calendar``, the same
+        fraction over the listing's **entire** calendar rather than the label window.
+        Listings absent from ``calendar`` are absent here; the caller's merge is where that
+        surfaces.
+
+        ``blocked_fraction_calendar`` exists for the dormancy filter and is **never a
+        feature**: it spans the label window and then some. A listing blocked for its whole
+        forward year has been withdrawn, not booked — and unlike a rule defined only outside
+        the window, this one cannot mistake a summer-only operator for a dead listing,
+        because a seasonal listing is open during the summer by definition.
 
     Raises:
         KeyError: If a required column is missing.
@@ -84,6 +92,12 @@ def occupancy_label(calendar: pd.DataFrame, window_days: int = LABEL_WINDOW_DAYS
         }
     )
     labels[blocked] = (1 - labels[available] / window_days).astype("float64")
+
+    # Over the whole calendar, not the window. Its denominator is per-listing (365, or 366-367
+    # for eight of them), which is why it is computed as a mean rather than a fixed division.
+    labels["blocked_fraction_calendar"] = (
+        1 - calendar.groupby("listing_id")["available"].mean()
+    ).astype("float64")
 
     # Reported, not raised: a gap outside the window cannot affect the label, and a gap
     # inside it already failed the size check above. Eight listings run 366-367 contiguous
@@ -136,9 +150,10 @@ def crosscheck_availability_90(labels: pd.DataFrame, listings: pd.DataFrame) -> 
 #     another string column. Price must be imputed first.
 #   - Scheme decided 2026-08-04: **reserve the atoms, quantile the interior.** label == 0.0 ->
 #     grade 0; label == 1.0 -> grade 4; the interior quantiled into grades 1-3 within partition.
-#     Chosen over pure quantile grading (which buries 40.6 % of never-reviewed listings in
-#     grade 0, against 8.1 % here) and over fixed global cut points (which put 42.2 % of
-#     Thessaloniki in grade 0 against 11.4 % of Crete, destroying cross-city comparability).
+#     Chosen over pure quantile grading (which buries 38.5 % of never-reviewed listings in
+#     grade 0, against 8.0 % here — re-measured 2026-08-15 on the four-rule population) and over
+#     fixed global cut points (which put 42.2 % of Thessaloniki in grade 0 against 11.4 % of
+#     Crete, destroying cross-city comparability; measured pre-audit, rejected structurally).
 #   - An interior tie rule is still needed: the label lives on a 91-value grid
 #     (blocked_days / 90), so listings share values straddling a cut point. Not because the
 #     spikes are heavy — the atoms sit at the extremes, where a boundary rarely lands.

@@ -50,20 +50,21 @@ dominates blocked-because-closed.
 
 > **What the label encodes — a two-stage signal (measured 2026-08-03).** Mean blocked fraction
 > rises monotonically with listing age in every city — never reviewed / new this year /
-> established = 0.214 / 0.277 / 0.359 (Thessaloniki), 0.243 / 0.323 / 0.416 (Athens),
-> 0.418 / 0.561 / 0.638 (Crete) — and ~30 % of each market is new since last summer. Restricting
-> to established listings collapses the review-*volume* correlation to 0.034 / 0.151 / 0.065,
-> which is why `reviews_per_month`, the one tenure-normalised signal, is the weakest of all of
-> them.
+> established = 0.215 / 0.269 / 0.326 (Thessaloniki), 0.243 / 0.323 / 0.416 (Athens),
+> 0.418 / 0.551 / 0.619 (Crete) — and ~30 % of each market is new since last summer. Restricting
+> to established listings takes the same-season correlation to 0.097 / 0.153 / 0.135, which is
+> why `reviews_per_month`, the one tenure-normalised signal, is the weakest of all of them.
+> (Re-measured 2026-08-14: before the dormancy rule the collapse was steeper, 0.034 / 0.151 /
+> 0.065 — a good share of the apparent confound was withdrawn listings sitting at label 1.0.)
 >
 > Within the established cohort, **review quality orders the label**: by rating tercile (≥ 10
-> reviews, so the rating is stable) mean blocked fraction runs 0.275 / 0.371 / 0.442
-> (Thessaloniki), 0.383 / 0.429 / 0.470 (Athens), 0.606 / 0.686 / 0.693 (Crete) — and
-> Thessaloniki's poorly-rated established listings (0.275) are indistinguishable from its
-> brand-new ones (0.277). The city ordering **inverts** between quality (ρ = 0.255 / 0.136 /
-> 0.177) and volume (0.084 / 0.172 / 0.128): large liquid markets rank on establishment, small
-> ones on quality. Ungated, Crete looks non-monotone only because its top rating band has a
-> median of 6 reviews against 37 in the middle band — noise in the instrument, not the signal.
+> reviews, so the rating is stable) mean blocked fraction runs 0.245 / 0.344 / 0.412
+> (Thessaloniki), 0.383 / 0.430 / 0.470 (Athens), 0.587 / 0.675 / 0.685 (Crete) — and
+> Thessaloniki's poorly-rated established listings (0.245) sit *below* its brand-new ones
+> (0.269). The city ordering **inverts** between quality (ρ = 0.274 / 0.137 / 0.210) and volume
+> (0.110 / 0.176 / 0.120): large liquid markets rank on establishment, small ones on quality.
+> Ungated, Crete looks non-monotone only because its top rating band has a median of 7 reviews
+> against 37 in the middle band — noise in the instrument, not the signal.
 >
 > **Claim: forward availability tracks listing establishment, and within the established cohort
 > it is ordered by review quality.** Not: that the label measures demand among
@@ -76,10 +77,12 @@ dominates blocked-because-closed.
 > **Validation instrument.** Prefer a *same-season-last-year* review window — reviews in
 > `[T − 365, T − 365 + 90)`, anchored per listing. It is leakage-free and seasonally matched to
 > the label window, unlike a trailing window from T, which lands in shoulder season. It raises
-> Thessaloniki's correlation 50 % over a trailing 40-day window. At equal 90-day width, where
-> season is the only difference, it gives 0.124 / 0.225 / 0.194 against the trailing window's
-> 0.061 / 0.194 / 0.215 — and it does so with *more* empty windows in two of three cities
-> (44.8 / 48.7 % against 38.2 / 42.5 %), so the gain is seasonal alignment, not extra data.
+> Thessaloniki's correlation over a trailing window. At equal 90-day width, where season is the
+> only difference, it gives 0.150 / 0.226 / 0.233 against the trailing window's
+> 0.119 / 0.196 / 0.277 — it wins in Thessaloniki and Athens and loses in Crete, the most
+> seasonal market, where recent activity tracks the coming summer better than last summer does.
+> It wins while having *more* empty windows in two of three cities, so the gain is seasonal
+> alignment, not extra data.
 > Extending it to absorb review-posting lag (104/110/120 days) was tested
 > and does not help. Never pool across cities: the between-city gradient runs opposite to the
 > within-city one (Crete is the most blocked market *and* the thinnest-reviewed), so a pooled
@@ -112,7 +115,9 @@ Rules:
 - **Preprocessing is lossless.** Row exclusion is an analytical decision that lives in
   `filters.py`, parameterized and revisable without re-processing. No rank-based outlier
   removal ("top 10 by min_nights") anywhere — thresholds only, identical across cities.
-  Price outliers are not removed at all; price treatment belongs to grading/features.
+  Price *outliers* are still not removed: `is_extreme_price` is a multiple-of-stratum-median
+  data-error guard (25 rows, worst at 374×), not a rank cut, and a ranker must rank expensive
+  listings too. Price treatment otherwise belongs to grading/features.
 - **Raw is forever.** Snapshots rotate off the public site; the stored copy is the only
   path to reproduction. Raw files are never edited.
 - **Registration is separate from download.** `download.py` fetches and manifests — it must
@@ -134,8 +139,8 @@ Rules:
 
   Tier bounds are **1–2 / 3–4 / 5–7 / 8+**. `accommodates` takes 16 distinct values (1–16) with
   87 % of listings at ≤ 6, so leaving it raw fragments the key badly — measured on the ranked
-  population: raw gives **1,126 groups with 237 singletons** and a median group of 6, against
-  **512 groups, 66 singletons** and a median of 15 under these bounds. A five-tier split
+  population: raw fragments the key badly, against **506 groups, 63 singletons** and a median of
+  15 under these bounds (re-measured 2026-08-14). A five-tier split
   (7–8 / 9+) costs 62 more groups and 13 more singletons for no gain; a three-tier split
   (5+) reaches 432 / 44 but lumps 5- and 16-guest properties into one search intent. The
   5–6 / 7+ cut measures identically (517 / 64, same cascade fills); 5–7 / 8+ wins on semantics,
@@ -144,14 +149,26 @@ Rules:
 
   **Group construction (Phase 2): minimum size 5, falling back by dropping the *neighbourhood*
   dimension** — undersized groups rank against `city × room_type × capacity_tier`. Measured:
-  512 groups / 66 singletons with no minimum, against **394 groups / 5 singletons**, median
-  size 29 and 99.9 % of listings in a usable group (size > 1 and more than one grade) with the
-  fallback; 284 listings (0.6 %) use it. **No threshold on `neighbourhood_cleansed` itself**, and
+  506 groups / 63 singletons with no minimum, against **391 groups / 3 singletons**, median
+  size 29, and zero-variance groups down from 29 to 10 with the fallback; 279 listings (0.6 %)
+  use it. **No threshold on `neighbourhood_cleansed` itself**, and
   no spatial merging of sparse neighbourhoods — thresholding one factor cannot fix a product.
-  Of those 284 listings, only 43 sit in a neighbourhood below 50 listings while 186 are in
-  neighbourhoods of 100+ (Χανίων holds 6,009). Merging was rejected on measurement too: sub-50
+  Of those 279 listings, only a minority sit in a neighbourhood below 50 listings; most are in
+  neighbourhoods of 100+ (Χανίων holds ~6,000). Merging was rejected on measurement too: sub-50
   neighbourhoods sit 0.6 km apart in Athens but **16.6 km median, 39.8 km max in Crete**, so a
   merge would invent exactly the incoherent group the fallback avoids.
+
+  **Near-twin listings are a splitting problem, not a filtering one** (settled 2026-08-14).
+  Listings sharing a host, a point to 4 dp and a capacity are **15.6 / 16.2 / 9.4 %** of each
+  market — 1,923 clusters, largest 26. They look like duplicates and are not: only **5.8 %**
+  share a calendar and **15.3 %** a review count, and the median within-cluster spread in review
+  count is 7. They are distinct inventory — one operator with several identical flats — so
+  dropping them would delete 12 % of real supply, concentrated in exactly the commercial-operator
+  population Phase 5 studies. What they *do* create is leakage: median within-cluster label
+  spread is 0.079, so twins on both sides of a random split let a model memorise the pair. The
+  remedy is a **grouped split** on
+  [`features.groups.cluster_id`](../src/rental_ranking/features/groups.py) — every cluster member
+  lands wholly in train or wholly in test. No rows lost.
 
 ## Anonymization policy
 
@@ -250,24 +267,25 @@ availability. Two consequences, of different severity:
   those have `availability_90 == 0`. **Never expose a price-missingness indicator as a feature**,
   and do not pass NaN through to LightGBM — its native missing handling would split directly on
   the leak. **Impute** from the `city × neighbourhood_cleansed × room_type × accommodates`
-  median. Rows needing this after the filters: **193 / 121 / 1,503** = 4.0 / 0.9 / 5.6 %
-  (re-measured 2026-08-05 against the two-rule `filters.py`; the earlier 188 / 47 / 1,231 was
-  computed under a filter definition that no longer exists). Dropping them instead would
-  systematically delete the highest-demand listings.
+  median. Rows needing this after the filters: **33 / 120 / 541** = 0.7 / 0.8 / 2.1 %
+  (re-measured 2026-08-14 against the four-rule `filters.py`). The dormancy rule removed most of
+  what used to need imputing — 1,817 rows before it, 694 after — because a withdrawn listing has
+  no available date for the scraper to quote. Dropping the remainder would still systematically
+  delete the highest-demand listings.
 
-  **The cascade is a contract term, not defensive coding**, because 14 rows have no priced peer
-  in their own stratum. Rungs, with rows resolved at each (measured):
+  **The cascade stays a contract term** even though it now resolves in two rungs: a thinner
+  snapshot would need the lower ones, and the `city` rung is the guaranteed terminator. Rows
+  resolved at each (measured):
 
   | rung | fills | still open |
   | --- | ---: | ---: |
-  | `city × neighbourhood × room_type × accommodates` | 1,803 | 14 |
-  | `city × neighbourhood × room_type × capacity_tier` | 4 | 10 |
-  | `city × neighbourhood × room_type` | 4 | 6 |
-  | `city × room_type` | 6 | 0 |
+  | `city × neighbourhood × room_type × accommodates` | 692 | 2 |
+  | `city × neighbourhood × room_type × capacity_tier` | 2 | 0 |
+  | `city × neighbourhood × room_type` | 0 | 0 |
+  | `city × room_type` | 0 | 0 |
   | `city` | 0 | 0 |
 
-  The `city` rung never fires on these snapshots; it stays as the guaranteed terminator. Note
-  the capacity-tier rung is the reason Phase 1 owns the tier definition. **The key is structural
+  The capacity-tier rung is the reason Phase 1 owns the tier definition. **The key is structural
   throughout** — never cohort, listing age or `rating_shrunk`; see the decisions log for why.
 - **Value contamination is mild.** Within `room_type × accommodates × neighbourhood` strata,
   median relative price shifts only 0.98–1.05 / 0.95–1.01 / 0.78–1.07 across quote-lead buckets.
@@ -294,16 +312,36 @@ availability. Two consequences, of different severity:
 ## Filters (Phase 1, `filters.py` — re-derived, not ported)
 
 Applied at label-build time, identical thresholds per city, per-city **per-rule** removal counts
-returned. **Two rules, not three** (amended 2026-08-01 — see below):
+returned. **Four rules** — two re-derived 2026-08-01, two added 2026-08-14 after an audit:
 
 | rule | Thessaloniki | Athens | Crete | total |
 | --- | ---: | ---: | ---: | ---: |
-| (1) zero reviews ever **and** fully blocked calendar (inactive / personal use) | 75 | 101 | 523 | 699 |
-| (3) `minimum_nights` > 30 (de facto long-term rental) | 25 | 1 | 43 | 69 |
-| **removed** (the two rules overlap on 2 rows) | 99 | 102 | 565 | **766** |
+| `is_inactive` — zero reviews ever **and** fully blocked label window | 75 | 101 | 523 | 699 |
+| `is_long_term` — `minimum_nights` > 30 (de facto long-term rental) | 25 | 1 | 43 | 69 |
+| `is_dormant` — ≥ 99 % blocked across the **whole** calendar | 222 | 2 | 1,279 | 1,503 |
+| `is_extreme_price` — > 20× the listing's own stratum median | 4 | 14 | 7 | 25 |
+| caught by more than one rule | 48 | 0 | 295 | 343 |
+| **removed** | 277 | 118 | 1,556 | **1,951** |
 
-Measured 2026-08-01 against `data/processed/`: 766 of 46,635 rows, 1.6 %; 45,869 survive.
-Nothing else — no price-based row removal.
+Measured 2026-08-14 against `data/processed/`: 1,951 of 46,635 rows, 4.2 %; **44,684 survive**.
+
+> **Dormancy, and why it spans the whole year.** These listings carry review histories (median 9
+> reviews, so `is_inactive` never sees them) but were last reviewed a median of **540 days**
+> before T against 43 for the ranked population, and **94 % of them sat at a label of exactly
+> 1.0** — the top grade. They are withdrawn, not booked; `minimum_nights > 30` is already gone,
+> so nothing legitimate is blocked for twelve straight months. A narrower construction — blocked
+> across days 90–359 only, to keep the rule independent of the label window — was tested and
+> flags **1,493 seasonal operators** actively selling during the summer, which in a Greek market
+> is the core population. A seasonal listing is open in the window by definition, so the
+> whole-year rule cannot catch one. Removing dormant listings moved every headline number in the
+> label's favour: ρ 0.124 / 0.225 / 0.194 → **0.150 / 0.226 / 0.233**.
+>
+> **Extreme price is a data-error guard, not an outlier cut.** 25 rows above 20× their stratum
+> median, worst at 374×; the contract's ban on rank-based price removal stands. Nulls are never
+> flagged — price missingness tracks the label and is imputed, never filtered.
+
+Nothing else — no price-based row removal beyond that guard, and **no deduplication**; see the
+group-key section for why near-twin listings are a splitting problem, not a filtering one.
 
 Rule (3) is a safety net rather than a material filter here: `minimum_nights > 30` covers only
 0.50 / 0.01 / 0.16 % of rows. Keep it — thresholds identical across cities are worth more than
