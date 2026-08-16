@@ -246,3 +246,261 @@ def test_real_availability_crosscheck_meets_the_threshold(real_labels: pd.DataFr
     assert (report["exact_agreement"] >= label.MIN_AVAILABILITY_AGREEMENT).all()
     assert (report["mean_abs_diff"] < 0.05).all()
     assert report["n"].sum() == len(_processed("listings"))
+
+
+# --- assign_grades ------------------------------------------------------------------------
+#
+# Scheme E: the 0.0 atom is grade 0, everything above it is quartiled into 1-4 within
+# partition. The failure modes are all silent — a grade scale missing its top class, a tie
+# split by row order, a partition that reverses the label inside a query group — so each is
+# pinned in both directions rather than merely exercised.
+
+
+def _graded(
+    labels: list[float],
+    cities: list[str] | None = None,
+    room_types: list[str] | None = None,
+) -> pd.DataFrame:
+    """A minimal frame carrying just what ``assign_grades`` reads."""
+    n = len(labels)
+    return pd.DataFrame(
+        {
+            "blocked_fraction_90": labels,
+            "city": cities or ["athens"] * n,
+            "room_type": room_types or ["Entire home/apt"] * n,
+        }
+    )
+
+
+def _spread(count: int, first_blocked: int = 1) -> list[float]:
+    """``count`` distinct labels above the atom, as ``blocked_days / 90``.
+
+    Expressed in blocked *days* rather than fractions so a test can say where in the 91-value
+    grid its listings sit, which is what the tie and partition tests actually depend on.
+    """
+    assert first_blocked + count <= WINDOW + 1, "labels would run past the top of the grid"
+    return [k / WINDOW for k in range(first_blocked, first_blocked + count)]
+
+
+def test_the_zero_atom_is_grade_zero_and_nothing_else_is() -> None:
+    frame = _graded([0.0] * 5 + _spread(40))
+    grades, _ = label.assign_grades(frame)
+
+    assert (grades[frame["blocked_fraction_90"].eq(0.0)] == 0).all()
+    assert (grades[frame["blocked_fraction_90"].gt(0.0)] > 0).all()
+
+
+def test_the_one_atom_is_not_reserved_and_lands_in_the_top_quartile() -> None:
+    """Scheme E, reversing scheme B: 1.0 earns grade 4, it is not handed one."""
+    frame = _graded(_spread(40) + [1.0] * 4)
+    grades, _ = label.assign_grades(frame)
+
+    assert (grades[frame["blocked_fraction_90"].eq(1.0)] == 4).all()
+    assert (grades == 4).sum() > int(frame["blocked_fraction_90"].eq(1.0).sum())
+
+
+def test_grades_use_the_whole_scale() -> None:
+    grades, _ = label.assign_grades(_graded([0.0] * 4 + _spread(60)))
+
+    assert sorted(grades.unique()) == [0, 1, 2, 3, 4]
+
+
+def test_identical_labels_always_get_identical_grades() -> None:
+    """The tie rule: cuts land on the label's value, never on ``rank(method="first")``."""
+    frame = _graded(_spread(20) * 3)
+    grades, _ = label.assign_grades(frame)
+
+    per_value = frame.assign(grade=grades).groupby("blocked_fraction_90")["grade"].nunique()
+    assert (per_value == 1).all()
+
+
+def test_row_order_does_not_change_any_grade() -> None:
+    frame = _graded([0.0] * 3 + _spread(50))
+    forward, _ = label.assign_grades(frame)
+    shuffled = frame.sample(frac=1.0, random_state=7)
+    reversed_, _ = label.assign_grades(shuffled)
+
+    pd.testing.assert_series_equal(forward, reversed_.reindex(frame.index))
+
+
+def test_grade_never_decreases_as_the_label_rises_within_a_partition() -> None:
+    """The coarsening invariant, at partition scope — cross-cut partitions break it."""
+    frame = _graded([0.0] * 5 + _spread(60))
+    grades, _ = label.assign_grades(frame)
+
+    ordered = grades[frame["blocked_fraction_90"].sort_values().index].to_numpy()
+    assert (ordered[1:] >= ordered[:-1]).all()
+
+
+def test_each_partition_cell_cuts_its_own_quantiles() -> None:
+    """The Crete/Thessaloniki effect: one label, two cities, two grades.
+
+    Crete spans 1-80 blocked days; Thessaloniki tops out at 20. A listing blocked 18 days is
+    near the bottom of Crete's distribution and at the top of Thessaloniki's, which is the
+    whole point of grading within a market rather than globally.
+    """
+    frame = _graded(
+        _spread(80) + _spread(20) * 2,
+        cities=["crete"] * 80 + ["thessaloniki"] * 40,
+    )
+    grades, _ = label.assign_grades(frame)
+    at_eighteen = frame["blocked_fraction_90"].eq(18 / WINDOW)
+
+    by_city = frame.assign(grade=grades)[at_eighteen].groupby("city")["grade"].max()
+    assert by_city["crete"] == 1
+    assert by_city["thessaloniki"] == 4
+
+
+def test_undersized_cell_falls_back_to_the_coarser_partition() -> None:
+    """The five shared rooms are the cheapest in the city, so pooling collapses them to one
+    grade — where quantiling them on their own would have spread them over all four."""
+    frame = _graded(
+        _spread(50, first_blocked=41) + _spread(5),
+        room_types=["Entire home/apt"] * 50 + ["Shared room"] * 5,
+    )
+    grades, report = label.assign_grades(frame, min_rows=30)
+
+    assert report.loc[("athens", "Shared room"), "level"] == "fallback"
+    assert report.loc[("athens", "Entire home/apt"), "level"] == "partition"
+    assert sorted(grades[frame["room_type"].eq("Shared room")].unique()) == [1]
+
+
+def test_a_cell_at_the_minimum_keeps_its_own_quantiles() -> None:
+    """Both directions of the threshold: 30 rows is enough, 29 is not."""
+    frame = _graded(
+        _spread(60) + _spread(30),
+        room_types=["Entire home/apt"] * 60 + ["Private room"] * 30,
+    )
+    _, report = label.assign_grades(frame, min_rows=30)
+
+    assert report.loc[("athens", "Private room"), "level"] == "partition"
+
+
+def test_report_counts_every_row_and_separates_the_atom() -> None:
+    frame = _graded([0.0] * 7 + _spread(50))
+    _, report = label.assign_grades(frame)
+
+    assert report["n"].sum() == len(frame)
+    assert report["above_atom"].sum() == int(frame["blocked_fraction_90"].gt(0).sum())
+
+
+def test_a_null_label_raises_rather_than_being_graded() -> None:
+    frame = _graded(_spread(40) + [float("nan")])
+
+    with pytest.raises(ValueError, match="null"):
+        label.assign_grades(frame)
+
+
+def test_a_label_outside_the_unit_interval_raises() -> None:
+    frame = _graded(_spread(40) + [1.4])
+
+    with pytest.raises(ValueError, match=r"\[0, 1\]"):
+        label.assign_grades(frame)
+
+
+def test_concentrated_cell_falls_back_rather_than_failing() -> None:
+    """`min_rows` is a proxy; a cell can clear it and still be uncuttable.
+
+    Thirty-plus rows on a single label value pass the size test and then produce duplicate
+    quantile edges. That is the same condition the minimum exists for, detected exactly, so the
+    cell takes the fallback route — loudly, because it is a decision worth seeing.
+    """
+    frame = _graded(
+        [0.9] * 35 + _spread(80) * 3,
+        room_types=["Shared room"] * 35 + ["Entire home/apt"] * 240,
+    )
+
+    with pytest.warns(UserWarning, match="could not be cut"):
+        grades, report = label.assign_grades(frame)
+
+    assert report.loc[("athens", "Shared room"), "level"] == "fallback"
+    assert report.loc[("athens", "Shared room"), "above_atom"] == 35
+    assert grades[frame["room_type"].eq("Shared room")].nunique() == 1
+
+
+def test_uncuttable_fallback_raises_instead_of_returning_fewer_grades() -> None:
+    """The terminator has nowhere left to go, so a degenerate scale must fail loudly."""
+    frame = _graded([0.5] * 40)
+
+    with pytest.raises(ValueError, match="cannot be cut into 4 quantiles"):
+        label.assign_grades(frame)
+
+
+def test_a_healthy_partition_grades_without_warning(_no_warning) -> None:
+    """The fallback warning must stay silent on a population that does not need it."""
+    label.assign_grades(_graded([0.0] * 5 + _spread(60)))
+
+
+def test_missing_partition_column_raises_a_readable_keyerror() -> None:
+    frame = _graded(_spread(40)).drop(columns=["room_type"])
+
+    with pytest.raises(KeyError, match="room_type"):
+        label.assign_grades(frame)
+
+
+def test_grading_never_reads_a_price_column() -> None:
+    """`label.py` must stay uncoupled from `price.py`; the partition is column names only."""
+    frame = _graded([0.0] * 4 + _spread(60))
+    grades, _ = label.assign_grades(frame)
+    with_price, _ = label.assign_grades(frame.assign(price=range(len(frame))))
+
+    pd.testing.assert_series_equal(grades, with_price)
+
+
+# --- assign_grades against the real snapshots ---------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def real_ranked() -> pd.DataFrame:
+    """The ranked population as Phase 1 hands it to grading: filtered, price imputed."""
+    from rental_ranking.data.filters import filter_listings
+    from rental_ranking.features.groups import capacity_tier
+    from rental_ranking.features.price import impute_price
+
+    listings = _processed("listings")
+    labels = label.occupancy_label(_processed("calendar"))
+    kept, _ = filter_listings(listings.merge(labels, left_on="id", right_index=True, how="inner"))
+    priced, _ = impute_price(kept)
+    return priced.assign(capacity_tier=capacity_tier(priced))
+
+
+def test_real_grades_cover_the_scale_and_every_row(real_ranked: pd.DataFrame) -> None:
+    grades, report = label.assign_grades(real_ranked)
+
+    assert sorted(grades.unique()) == [0, 1, 2, 3, 4]
+    assert grades.notna().all()
+    assert report["n"].sum() == len(real_ranked)
+
+
+def test_real_grading_leaves_no_tie_split_across_grades(real_ranked: pd.DataFrame) -> None:
+    """0 % on the real snapshots — the whole reason cuts land on value rather than rank."""
+    per_value = (
+        real_ranked.assign(grade=label.assign_grades(real_ranked)[0])
+        .groupby(["city", "room_type", "blocked_fraction_90"], observed=True)["grade"]
+        .nunique()
+    )
+
+    assert (per_value == 1).all()
+
+
+def test_real_grade_never_opposes_the_label_inside_a_query_group(
+    real_ranked: pd.DataFrame,
+) -> None:
+    """The coarsening rule that rejected the price tier, enforced against the real key."""
+    grades = label.assign_grades(real_ranked)[0].to_numpy()
+    labels = real_ranked["blocked_fraction_90"].to_numpy()
+    key = ["city", "neighbourhood_cleansed", "room_type", "capacity_tier"]
+
+    for _, positions in real_ranked.groupby(key, observed=True).indices.items():
+        ordered = grades[positions][labels[positions].argsort(kind="stable")]
+        assert (ordered[1:] >= ordered[:-1]).all()
+
+
+def test_real_cold_start_listings_are_not_buried_in_grade_zero(
+    real_ranked: pd.DataFrame,
+) -> None:
+    """8.0 % under scheme E against 38.6 % under plain quintiles — the reason for the atom."""
+    grades = label.assign_grades(real_ranked)[0]
+    never_reviewed = real_ranked["number_of_reviews"].eq(0)
+
+    assert (grades[never_reviewed] == 0).mean() < 0.10

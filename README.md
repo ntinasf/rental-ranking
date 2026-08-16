@@ -14,7 +14,7 @@ a command job, an endpoint demo). This README grows with the project — see
 - `src/rental_ranking/data/` — acquisition, anonymization, typing and the raw → processed build (complete)
 - `src/rental_ranking/` — label and feature construction, training, evaluation (Phase 1 onward)
 - `pipelines/` — Azure ML job and pipeline YAML
-- `tests/` — unit tests per module; 301 passing
+- `tests/` — unit tests per module; 322 passing
 - `docs/` — build guide, data dictionary, data-pipeline contract, decisions log, A/B test design
 - `data/` — local data, gitignored
 

@@ -14,6 +14,10 @@ no I/O, no ``main()``. Reading the parquets belongs to the caller — the notebo
 Phase 2 orchestrator.
 """
 
+import warnings
+from collections.abc import Sequence
+
+import numpy as np
 import pandas as pd
 
 from rental_ranking.data.validate import require_columns, warn_violations
@@ -27,6 +31,26 @@ LABEL_WINDOW_DAYS = 90
 #: Measured 99.96-99.99 %; the residual is scrape timing, not a defect. Enforced against the
 #: real snapshots by ``tests/test_label.py``, not at runtime — see ``crosscheck_availability_90``.
 MIN_AVAILABILITY_AGREEMENT = 0.999
+
+#: Quantile bins above the zero atom. Grades run 0-4: grade 0 is the atom itself, grades 1-4
+#: are quartiles of everything above it. See :func:`assign_grades` for why the 1.0 atom is not
+#: reserved as well.
+GRADES_ABOVE_ATOM = 4
+
+#: Rows above the atom a partition cell needs before it cuts its own quantiles. Three is the
+#: arithmetic floor for quartiles; 30 is where the cut points stop moving with a handful of
+#: rows. Two cells fall below it on the current snapshots (Athens and Crete Shared room, 31
+#: rows between them), and grade within ``DEFAULT_FALLBACK_COLS`` instead.
+MIN_PARTITION_ROWS = 30
+
+#: The grading partition. **A coarsening of the query-group key, never a cross-cut of it** —
+#: see :func:`assign_grades`. Room type earns its place on gradient (mean-label spread across
+#: its levels is 0.027 / 0.222 / 0.146 by city); a price tier does not and would break the
+#: coarsening rule besides.
+DEFAULT_PARTITION_COLS = ("city", "room_type")
+
+#: Terminator for cells below ``MIN_PARTITION_ROWS``. Applied regardless of its own size.
+DEFAULT_FALLBACK_COLS = ("city",)
 
 
 def occupancy_label(calendar: pd.DataFrame, window_days: int = LABEL_WINDOW_DAYS) -> pd.DataFrame:
@@ -144,18 +168,166 @@ def crosscheck_availability_90(labels: pd.DataFrame, listings: pd.DataFrame) -> 
     )
 
 
-# TODO — assign_grades. Measured evidence and counts: NEXT_STEPS step 5.
-#   - assign_grades(frame, label_col, partition_cols) takes partition *column names*, not a
-#     price frame, so this module never imports features/price.py — the price tier is just
-#     another string column. Price must be imputed first.
-#   - Scheme decided 2026-08-04: **reserve the atoms, quantile the interior.** label == 0.0 ->
-#     grade 0; label == 1.0 -> grade 4; the interior quantiled into grades 1-3 within partition.
-#     Chosen over pure quantile grading (which buries 38.5 % of never-reviewed listings in
-#     grade 0, against 8.0 % here — re-measured 2026-08-15 on the four-rule population) and over
-#     fixed global cut points (which put 42.2 % of Thessaloniki in grade 0 against 11.4 % of
-#     Crete, destroying cross-city comparability; measured pre-audit, rejected structurally).
-#   - An interior tie rule is still needed: the label lives on a 91-value grid
-#     (blocked_days / 90), so listings share values straddling a cut point. Not because the
-#     spikes are heavy — the atoms sit at the extremes, where a boundary rarely lands.
-#   - The partition rule is explicit: collapse rare room_types, set a minimum size, then fall
-#     back city x room_type -> city, returning which level each row used. Pin it with tests.
+def _quartiles(values: pd.Series, reference: pd.Series, cell: object) -> pd.Series:
+    """Grade ``values`` 1-4 against the quartiles of ``reference``.
+
+    Split from a plain ``qcut`` because the two are not always the same population: a cell that
+    cuts its own quantiles passes ``values`` twice, while an undersized cell passes its own rows
+    and the *fallback* pool as the reference. Edges therefore come from ``retbins`` and are
+    applied with :func:`pandas.cut`, which is what ``qcut`` does internally anyway.
+    """
+    try:
+        _, edges = pd.qcut(reference, GRADES_ABOVE_ATOM, labels=False, retbins=True)
+    except ValueError as exc:  # duplicate edges — the distribution is too concentrated
+        raise ValueError(
+            f"grading cell {cell!r} ({len(reference)} rows above the atom) cannot be cut into "
+            f"{GRADES_ABOVE_ATOM} quantiles on value: {exc}. Raising rather than merging bins, "
+            "which would hand back fewer grades than the scale promises"
+        ) from exc
+
+    # Open the outer edges so a value outside the reference range still bins. Only reachable
+    # when reference is a superset of values, but a silent NaN grade is not worth the risk.
+    edges[0], edges[-1] = -np.inf, np.inf
+    return pd.cut(values, edges, labels=False).astype("int64") + 1
+
+
+def assign_grades(
+    listings: pd.DataFrame,
+    label_col: str = "blocked_fraction_90",
+    partition_cols: Sequence[str] = DEFAULT_PARTITION_COLS,
+    fallback_cols: Sequence[str] = DEFAULT_FALLBACK_COLS,
+    min_rows: int = MIN_PARTITION_ROWS,
+) -> tuple[pd.Series, pd.DataFrame]:
+    """Bucket the demand proxy into relevance grades 0-4 within a partition.
+
+    **Scheme E, decided 2026-08-16.** ``label == 0.0`` is reserved as grade 0; everything above
+    it is quartiled into grades 1-4 within partition. The zero atom is a qualitatively different
+    state — nothing in 90 peak-season days was blocked — and reserving it is what keeps
+    cold-start listings out of the bottom grade: 8.0 % of never-reviewed listings land in grade
+    0 here against 38.6 % under plain quintiles.
+
+    The 1.0 atom is deliberately **not** reserved, reversing the earlier scheme B. Measured, the
+    entire cold-start benefit comes from the zero atom (scheme B and this one both give 8.0 %),
+    while reserving 1.0 as well cost a top class of 2.6 % that appears in only 41 % of query
+    groups, and made one blocked night out of ninety decide a grade boundary on a label where
+    blocked is not booked. Since the dormancy filter, every listing at 1.0 carries reviews
+    (132 / 372 / 664, median 18.5 / 12 / 8), so it sits at the top of the fourth quartile on its
+    merits rather than needing a reserved seat.
+
+    **Cuts are on the label's value, not on its rank.** ``pd.qcut`` yields left-open,
+    right-closed intervals, so every listing sharing a label value gets the same grade and the
+    grade is non-decreasing in the label inside each cell. Cutting on ``rank(method="first")``
+    would instead split identical listings by row order. The cost is that the quartiles are not
+    exactly equal — the label lives on a 91-value grid, so a boundary value takes its whole tie
+    group into the lower bin.
+
+    **The partition must be a coarsening of the query-group key** — that is why this takes
+    column *names*: `city x room_type` is nested inside
+    `city x neighbourhood x room_type x capacity_tier`, so grade order can never oppose label
+    order inside a group. A cross-cutting partition (a price tier) breaks that in 145 of 516
+    groups. ``tests/test_label.py`` pins the invariant; see docs/data_pipeline_design.md.
+
+    Taking names rather than a price frame is also what keeps this module from importing
+    ``features/price.py``. Nothing derived from price reaches the grade any more, but the
+    decoupling stands: grading is testable with a fixture of plain strings.
+
+    Not special-cased, deliberately: listings with **zero reviews and a zero label** land in
+    grade 0 like any other zero. Undiscovered and undesirable are indistinguishable in this
+    data, and a neutral grade would fabricate a target. They are carried and named as a
+    limitation instead (decisions log 2026-08-04).
+
+    Args:
+        listings: The **filtered** ranked population, with price already imputed, carrying
+            ``label_col`` and every partition and fallback column.
+        label_col: The demand proxy column, in ``[0, 1]``.
+        partition_cols: Columns whose combination defines a grading cell.
+        fallback_cols: Coarser columns used by cells that cannot carry their own quantiles.
+            This is the terminator — applied regardless of its own size, and the one place a
+            failure to cut is fatal rather than recoverable.
+        min_rows: Rows above the atom a cell needs before it cuts its own quartiles. It is only
+            a proxy: a cell can clear it and still be too concentrated to cut, in which case it
+            takes the same fallback route and the call warns once with a count.
+
+    Returns:
+        ``(grades, report)``. ``grades`` is an integer Series aligned to ``listings``, named
+        ``grade``, with values in ``{0, 1, 2, 3, 4}``. ``report`` is one row per partition
+        cell: ``n``, ``above_atom``, and ``level`` — ``"partition"``, ``"fallback"``, or
+        ``"empty"`` for a cell with nothing above the atom to cut.
+
+    Warns:
+        UserWarning: Once, with a count, if any cell cleared ``min_rows`` but could not be cut
+            into quantiles and was graded within ``fallback_cols`` instead.
+
+    Raises:
+        KeyError: If a required column is missing.
+        ValueError: If the label is null or outside ``[0, 1]``, or if a **fallback** cell's
+            quantile edges are not unique — there is no coarser population left, and returning
+            fewer grades than the scale promises is worse than failing.
+    """
+    partition_cols, fallback_cols = list(partition_cols), list(fallback_cols)
+    require_columns(listings, [label_col, *partition_cols, *fallback_cols], "listings")
+
+    label = listings[label_col]
+    if label.isna().any():
+        raise ValueError(
+            f"{label_col} is null for {int(label.isna().sum())} row(s); grading "
+            "every row is the point, so there is no sensible grade to assign"
+        )
+    if not label.between(0, 1).all():
+        raise ValueError(
+            f"{label_col} must lie in [0, 1]; found "
+            f"[{label.min()}, {label.max()}] — this is not a blocked fraction"
+        )
+
+    grades = pd.Series(-1, index=listings.index, dtype="int64", name="grade")
+
+    # Exact equality is safe: the label is 1 - k/90 for integer k, and k == 90 gives exactly
+    # 0.0 in IEEE 754. A tolerance here would silently absorb 1/90 = 0.011 into the atom.
+    at_atom = label.eq(0.0)
+    grades[at_atom] = 0
+
+    above = listings.loc[~at_atom]
+    cell_size = above.groupby(partition_cols, observed=True)[label_col].transform("size")
+    fell_back = cell_size < min_rows
+
+    # `min_rows` is only a proxy for "this cell can carry its own quantiles"; a cell can clear it
+    # and still be too concentrated to cut, which is the same condition detected exactly. Such a
+    # cell takes the same route as an undersized one rather than killing the call — but it warns,
+    # because regrading a cell against a coarser population is a decision worth seeing.
+    concentrated = []
+    for cell, idx in above.loc[~fell_back].groupby(partition_cols, observed=True).groups.items():
+        try:
+            grades.loc[idx] = _quartiles(label.loc[idx], label.loc[idx], cell)
+        except ValueError:
+            fell_back.loc[idx] = True
+            concentrated.append(cell)
+    if concentrated:
+        warnings.warn(
+            f"{len(concentrated)} partition cell(s) had {min_rows}+ rows above the atom but "
+            f"could not be cut into {GRADES_ABOVE_ATOM} quantiles on value, so they were graded "
+            f"within {fallback_cols} instead: {concentrated[:5]}",
+            stacklevel=2,
+        )
+
+    # Undersized cells are graded against the *whole* fallback population, never against each
+    # other. Pooling five shared rooms and quantiling them among themselves would spread them
+    # across all four grades on no evidence — exactly the noise `min_rows` exists to prevent.
+    # So the cut points come from every above-atom row sharing the fallback key, and only the
+    # undersized rows are assigned from them.
+    # Both mappings come from `.groups` so their keys have the same shape — a groupby over a
+    # one-element column list yields tuple keys when iterated but scalars from `.groups`.
+    pools = above.groupby(fallback_cols, observed=True).groups
+    for cell, idx in above.loc[fell_back].groupby(fallback_cols, observed=True).groups.items():
+        grades.loc[idx] = _quartiles(label.loc[idx], label.loc[pools[cell]], cell)
+
+    counts = listings.groupby(partition_cols, observed=True).size().rename("n")
+    report = pd.DataFrame({"n": counts})
+    report["above_atom"] = (
+        above.groupby(partition_cols, observed=True).size().reindex(counts.index).fillna(0)
+    ).astype("int64")
+    used_fallback = above.loc[fell_back].groupby(partition_cols, observed=True).size()
+    report["level"] = np.where(
+        used_fallback.reindex(counts.index).fillna(0) > 0, "fallback", "partition"
+    )
+    report.loc[report["above_atom"].eq(0), "level"] = "empty"
+    return grades, report

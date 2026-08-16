@@ -139,8 +139,9 @@ Rules:
 
   Tier bounds are **1–2 / 3–4 / 5–7 / 8+**. `accommodates` takes 16 distinct values (1–16) with
   87 % of listings at ≤ 6, so leaving it raw fragments the key badly — measured on the ranked
-  population: raw fragments the key badly, against **506 groups, 63 singletons** and a median of
-  15 under these bounds (re-measured 2026-08-14). A five-tier split
+  population: raw fragments the key badly, against **516 groups, 71 singletons** and a median of
+  14 under these bounds (re-measured 2026-08-16 against `groups.capacity_tier` itself; the
+  506 / 63 / 15 figures carried before that date were slightly off). A five-tier split
   (7–8 / 9+) costs 62 more groups and 13 more singletons for no gain; a three-tier split
   (5+) reaches 432 / 44 but lumps 5- and 16-guest properties into one search intent. The
   5–6 / 7+ cut measures identically (517 / 64, same cascade fills); 5–7 / 8+ wins on semantics,
@@ -149,11 +150,11 @@ Rules:
 
   **Group construction (Phase 2): minimum size 5, falling back by dropping the *neighbourhood*
   dimension** — undersized groups rank against `city × room_type × capacity_tier`. Measured:
-  506 groups / 63 singletons with no minimum, against **391 groups / 3 singletons**, median
-  size 29, and zero-variance groups down from 29 to 10 with the fallback; 279 listings (0.6 %)
+  516 groups / 71 singletons with no minimum, against **399 groups / 6 singletons**, median
+  size 28, and zero-variance groups down from 29 to 11 with the fallback; 289 listings (0.6 %)
   use it. **No threshold on `neighbourhood_cleansed` itself**, and
   no spatial merging of sparse neighbourhoods — thresholding one factor cannot fix a product.
-  Of those 279 listings, only a minority sit in a neighbourhood below 50 listings; most are in
+  Of those 289 listings, only a minority sit in a neighbourhood below 50 listings; most are in
   neighbourhoods of 100+ (Χανίων holds ~6,000). Merging was rejected on measurement too: sub-50
   neighbourhoods sit 0.6 km apart in Athens but **16.6 km median, 39.8 km max in Crete**, so a
   merge would invent exactly the incoherent group the fallback avoids.
@@ -285,12 +286,25 @@ availability. Two consequences, of different severity:
   | `city × room_type` | 0 | 0 |
   | `city` | 0 | 0 |
 
-  The capacity-tier rung is the reason Phase 1 owns the tier definition. **The key is structural
-  throughout** — never cohort, listing age or `rating_shrunk`; see the decisions log for why.
+  The capacity-tier rung is the reason Phase 1 owns the *capacity* tier definition. **The key is
+  structural throughout** — never cohort, listing age or `rating_shrunk`; see the decisions log.
+
+  **The fill is a median, and that was tested rather than assumed.** Held out leave-one-out
+  against 8,000 rows that do have a price, median absolute error: `city` 39.6 %, `city × room_type`
+  39.5 %, `city × room_type × accommodates` 28.6 %, **this cascade 26.3 %**, a haversine KNN
+  (k=5, within `city × room_type × capacity_tier`) 23.9 %. The KNN wins and is still rejected —
+  the floor is ~24 % either way, it touches 1.6 % of rows on a feature that no longer feeds the
+  target, `KNNImputer` over the listings frame would silently adopt behavioural neighbours, and
+  it averages, which is the wrong statistic at skew 6.5. Logged 2026-08-16.
 - **Value contamination is mild.** Within `room_type × accommodates × neighbourhood` strata,
   median relative price shifts only 0.98–1.05 / 0.95–1.01 / 0.78–1.07 across quote-lead buckets.
-  Usable with a stated caveat. Build price tiers within city (and probably room type) so residual
-  seasonal drift does not become a cross-market artefact.
+  Usable with a stated caveat.
+
+  This once argued for a **price tier**, and that artefact is **withdrawn** (2026-08-16). Its
+  only consumer was the grading partition, and a price tier cross-cuts the query-group key
+  instead of coarsening it — see "Grading partition" below. Rank-within-market survives as a
+  possible Phase 2 *feature* (a continuous within-city price percentile), where the same
+  argument holds without touching the target.
 
 ## Column spec — calendar and reviews
 
@@ -356,11 +370,83 @@ the rows they remove — but do not expect it to change any distribution.
 > is the cold-start cohort, which Phase 2 flags (`has_reviews`) and Phase 5 studies. Filtering it
 > would delete the population later phases are about.
 
-**Ordering constraint.** Filters run *before* price imputation, price tiering and grading.
-Quantile boundaries must be computed on the population that will actually be ranked. Note also
-that rule (1) removes exactly the (zero reviews, blocked fraction = 1.0) corner, so it
-mechanically raises the label's correlation with review signals — label validation must report
-that correlation both **before and after** filtering, or the validation is partly circular.
+**Ordering constraint.** Filters run *before* price imputation and grading. Quantile boundaries
+must be computed on the population that will actually be ranked. Note also that rule (1) removes
+exactly the (zero reviews, blocked fraction = 1.0) corner, so it mechanically raises the label's
+correlation with review signals — label validation must report that correlation both **before
+and after** filtering, or the validation is partly circular.
+
+## Grading partition
+
+**A grading partition must be a coarsening of the query-group key, never a cross-cut of it.**
+The query key is `city × neighbourhood_cleansed × room_type × capacity_tier`. If every listing
+in a group falls in one partition cell, the grade is a monotone step function of the label
+*inside that group*, so the target can never contradict the label. If the partition cross-cuts
+the key, two listings in the same group are quantiled against different populations and their
+grade order can oppose their label order — on a target LambdaMART trains to reproduce.
+
+Provable, and measured across the 516 query groups of the ranked population:
+
+| grading partition | cells | query groups with an inversion |
+| --- | ---: | ---: |
+| `city` | 3 | **0** |
+| **`city × room_type`** *(chosen)* | **11** | **0** |
+| `city × room_type × capacity_tier` | 41 | **0** |
+| `city × neighbourhood_cleansed` | 75 | **0** |
+| the query group itself | 516 | **0** |
+| `city × room_type × price_tier` | 29 | **163** |
+| `city × price_tier` | 9 | **168** |
+
+The chosen partition is **`city × room_type`**, with a fallback to `city` for any cell holding
+fewer than 30 interior rows (2 cells, 31 rows — Athens and Crete Shared room). Room type earns
+its place on gradient: mean label spread across its levels is 0.027 / 0.222 / 0.146 per city.
+`capacity_tier` passes the coarsening test too and is left out only because it adds nothing on
+top of room type; `price_tier` fails the test outright and is withdrawn. Grade **shares are
+invariant** to the choice under the chosen scheme, so the partition decides only which listings
+above the atom get grade 1 vs 2 vs 3 vs 4.
+
+**Consequence for price.** Nothing derived from `price` now touches the target — no tier, no
+partition, no grade. Imputation quality is a feature-quality question only, which is why the
+median cascade above is sized to the stakes rather than to precision.
+
+### The scheme: reserve the zero atom, quartile the rest
+
+**Scheme E, decided 2026-08-16**, replacing scheme B (both atoms reserved). `label == 0.0` is
+grade 0; everything above it is quartiled into grades 1–4 within the partition.
+
+Measured, **the whole cold-start benefit comes from the zero atom**: reserving both atoms and
+reserving only the zero atom both leave 8.0 % of never-reviewed listings in grade 0, against
+38.6 % under plain quintiles — while reserving only the *1.0* atom reaches 43.9 %, worse than
+quintiles. Reserving 1.0 as well was therefore pure cost: a 2.6 % top class present in only 41 %
+of query groups against 73 %, and a single blocked night out of ninety deciding a grade boundary
+on a label where blocked is not booked. The dormancy rule had already removed the reason scheme B
+existed — every listing now at 1.0 carries reviews (132 / 372 / 664, median 18.5 / 12 / 8).
+
+**Cuts land on the label's value, not its rank** (`pd.qcut`, left-open/right-closed), so every
+listing sharing a label value shares a grade and the grade is provably non-decreasing in the
+label inside each cell. On the real snapshots the tie rate is **0 %**, against 5.8 % under
+rank-based quintiles. The price is quartiles that are not exactly equal — a boundary value takes
+its whole tie group into the lower bin.
+
+| measured from `label.assign_grades` | |
+| --- | --- |
+| grade shares 0…4 | 3.4 / 24.6 / 24.1 / 24.4 / 23.4 |
+| mean label by grade | 0.000 / 0.168 / 0.413 / 0.602 / 0.829 |
+| identical label → different grade | 0 % |
+| never-reviewed in grade 0 | 8.0 % (2.38× the base rate) |
+| zero-variance query groups | 27 of 516 → 10 of 399 with the Phase 2 min-5 fallback |
+| distinct grades per multi-row group | 3.91 → 4.27 |
+| groups reaching grade 4 | 72.9 % → 86.0 % |
+
+Two limitations that belong in the write-up rather than in a reviewer's question. **Grade 0 is
+not per-city comparable** — it is an absolute criterion while grades 1–4 are within-partition
+quantiles, so it holds 7.1 % of Thessaloniki against 2.0 % of Crete. And **cold-start listings
+remain over-represented in grade 0** at 2.38× the base rate; scheme E moves far fewer of them
+there, it does not make the bottom grade unbiased.
+
+Undersized cells are graded against the **whole** fallback population, never against each other:
+pooling the undersized rows and quantiling them among themselves would spread five listings over
+all four grades and defeat the minimum entirely.
 
 ## Azure data assets
 
