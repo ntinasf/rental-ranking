@@ -92,6 +92,19 @@ Temporal design: all listings.csv attributes are known at T; the label is what t
 about after T. Features = as-of-T attributes. Calendar-derived and review-rate-derived listing
 columns are **not** features (blocklist below).
 
+> **Verified 2026-08-16, and it is not quite universal.** The split holds exactly when
+> `scrape_date <= T`. Measured on the ranked population, **26 listings (0.06 %)** breach it —
+> 5 Athens, 21 Crete, thirteen by one day and thirteen by two — because the scrape ran across
+> four calendar days. They are **kept**: excluding them would be a fifth filter rule for 26 rows,
+> and row exclusion belongs to `filters.py` with a threshold and a reported count. The breach is
+> nominal rather than material and that is measured, not asserted: structural attributes cannot
+> change in two days, the class that could is review-derived, and **none of the 26 has a review
+> dated after its own T**. Notebook 02 §7 is the reference.
+>
+> The guarantee this buys is **feature provenance**, never a train/test split *in time* — one
+> snapshot has no second period. The Phase 3 holdout is a **grouped** split on
+> `features/groups.py::cluster_id`, decided separately.
+
 ## Layered flow
 
 ```text
