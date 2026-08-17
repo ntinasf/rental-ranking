@@ -95,6 +95,18 @@ Registering an existing name+version fails rather than overwriting — assets ar
 is the property that makes a run tag worth trusting. To re-register after a change, bump the
 version.
 
+**Registered 2026-08-17**, all four, confirmed with `az ml data list -o table`:
+
+| Asset | Version | Type |
+| --- | --- | --- |
+| `raw-thessaloniki` | 2026.06.29 | `uri_folder` |
+| `raw-athens` | 2026.06.28 | `uri_folder` |
+| `raw-crete` | 2026.06.29 | `uri_folder` |
+| `features` | 2026.08.17 | `uri_file` |
+
+`pipelines/train_job.yml` takes `azureml:features:2026.08.17` as its input — a named version, not
+`@latest`, so a re-registration cannot silently change what a recorded run was trained on.
+
 **Why only these two.** The processed parquets stay local and are deliberately *not* registered:
 they are a reproducible intermediate — raw plus `data/build.py` reproduces them exactly — and
 nothing in the cloud consumes them, because preprocessing runs locally and the training job takes
