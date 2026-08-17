@@ -21,3 +21,8 @@ PROJECT_ROOT: Path = _project_root()
 DATA_DIR: Path = PROJECT_ROOT / "data"
 RAW_DIR: Path = DATA_DIR / "raw"
 PROCESSED_DIR: Path = DATA_DIR / "processed"
+
+#: Phase 2 output: the assembled feature matrix, and the second (and last) thing the
+#: project registers as an Azure data asset.
+FEATURES_DIR: Path = DATA_DIR / "features"
+FEATURE_TABLE_PATH: Path = FEATURES_DIR / "feature_table.parquet"

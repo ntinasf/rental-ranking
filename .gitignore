@@ -12,6 +12,9 @@ venv/
 # Notebooks
 .ipynb_checkpoints/
 
+# Scratch notebooks: exploratory, never published, not held to the run-clean rule
+notebooks/scratch_*.ipynb
+
 # Environment / secrets
 .env
 
@@ -31,6 +34,9 @@ data/raw/*
 !data/processed
 data/processed/*
 !data/processed/.gitkeep
+!data/features
+data/features/*
+!data/features/.gitkeep
 
 # OS
 .DS_Store
@@ -40,5 +46,7 @@ ENGINEERING_LESSONS.md
 claude_code_prompt.md
 rules_of_ml.md
 NEXT_STEPS.md
+NEXT_STEPS_2.md
+Phase_2_lessons.md
 docs/azure_cli_cheatsheet.md
 data_preprocessing.py

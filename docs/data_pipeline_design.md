@@ -161,11 +161,29 @@ Rules:
   because capacity clusters on even values (5 = 9.1 %, 6 = 11.7 %, **7 = 2.7 %**, 8 = 4.3 %) so
   `8+` starts the top tier on a real party size rather than a near-empty one.
 
-  **Group construction (Phase 2): minimum size 5, falling back by dropping the *neighbourhood*
-  dimension** — undersized groups rank against `city × room_type × capacity_tier`. Measured:
-  516 groups / 71 singletons with no minimum, against **399 groups / 6 singletons**, median
-  size 28, and zero-variance groups down from 29 to 11 with the fallback; 289 listings (0.6 %)
-  use it. **No threshold on `neighbourhood_cleansed` itself**, and
+  **Group construction (Phase 2): minimum size 5, with a two-rung fallback that drops the
+  *neighbourhood* dimension and then the *capacity* one** — undersized groups rank against
+  `city × room_type × capacity_tier`, and if they are still short, against `city × room_type`.
+  Measured, groups / singletons / under 5 / median size: **516 / 71 / 153 / 14** with no
+  minimum, **399 / 6 / 15 / 28** after one rung, **393 / 0 / 7 / 29** after both; rung usage is
+  44,395 / 255 / 34. The second rung is worth taking for 34 listings (0.08 %) because it is
+  what reaches **zero singletons**, and a singleton group is strictly worthless to LambdaMART —
+  one document, no pair, no gradient. *(Amended 2026-08-16; the one-rung version recorded here
+  before that date predates the second measurement.)* The terminal rung takes what it is given:
+  7 groups remain under five rows and are kept rather than dropped.
+
+  **The fallback pools the fallers; it never re-opens a healthy group to absorb them.** A group
+  that clears the minimum is settled and untouched, so widening the search for the listings that
+  lack a comparison set never coarsens the population that already has one. Each rung is
+  re-tested against the minimum, so a pooled group that is still short falls again.
+
+  **Every rung must retain the grading partition's columns** (`city`, `room_type`), which is why
+  the cascade drops only `neighbourhood_cleansed` and `capacity_tier`. A rung that dropped
+  `room_type` would put two grading cells inside one query group and break the coarsening
+  guarantee below; `groups.query_group` checks this against `label.DEFAULT_PARTITION_COLS` and
+  raises rather than trusting the constant.
+
+  **No threshold on `neighbourhood_cleansed` itself**, and
   no spatial merging of sparse neighbourhoods — thresholding one factor cannot fix a product.
   Of those 289 listings, only a minority sit in a neighbourhood below 50 listings; most are in
   neighbourhoods of 100+ (Χανίων holds ~6,000). Merging was rejected on measurement too: sub-50
@@ -447,9 +465,9 @@ its whole tie group into the lower bin.
 | mean label by grade | 0.000 / 0.168 / 0.413 / 0.602 / 0.829 |
 | identical label → different grade | 0 % |
 | never-reviewed in grade 0 | 8.0 % (2.38× the base rate) |
-| zero-variance query groups | 27 of 516 → 10 of 399 with the Phase 2 min-5 fallback |
+| zero-variance query groups | 27 of 516 → **10 of 393** with the Phase 2 min-5 cascade (48 listings) |
 | distinct grades per multi-row group | 3.91 → 4.27 |
-| groups reaching grade 4 | 72.9 % → 86.0 % |
+| groups reaching grade 4 | 72.9 % → **87.3 %** |
 
 Two limitations that belong in the write-up rather than in a reviewer's question. **Grade 0 is
 not per-city comparable** — it is an absolute criterion while grades 1–4 are within-partition
@@ -460,6 +478,147 @@ there, it does not make the bottom grade unbiased.
 Undersized cells are graded against the **whole** fallback population, never against each other:
 pooling the undersized rows and quantiling them among themselves would spread five listings over
 all four grades and defeat the minimum entirely.
+
+## The listing feature block (Phase 2 step 2)
+
+`features/listing.py` and `features/amenities.py`, both pure `DataFrame → DataFrame`. Everything
+in the block is an attribute of the property or its operator at the scrape, so the pre-T rule
+holds by construction: no calendar read, no review read.
+
+**Nothing is imputed.** `price` remains the sole imputed column in the project, filled in Phase 1
+for a reason that does not generalise — its missingness sits on a mechanical path from the label.
+`bedrooms` (7.5 % null), `beds` (3.7 %) and `bathrooms_shared` (0.1 %) pass through as NaN, which
+LightGBM handles by learning a split direction. The decisive measurement is in the decisions log
+(2026-08-17): **within a query group, the mean label percentile of a null-`bedrooms` listing is
+0.498 against 0.505** — the marginal per-city gap is composition, differenced out by the group
+because `room_type` is a key column.
+
+**Excluded, and why** — each is a judgement worth re-reading rather than re-deriving:
+
+| column | disposition | reason |
+| --- | --- | --- |
+| `host_id`, `license_hash` | never a feature | 18,088 / 33,246 near-unique values; memorising operators, not ranking |
+| `minimum_nights_avg_ntm` | excluded despite `KEEP` | "next twelve months" is computed over a window containing the label window. Differs from `minimum_nights` in 43 % of rows, so not merely redundant. **The contract's KEEP disposition and the pre-T rule disagree here; the pre-T rule wins** |
+| `host_identity_verified`, `host_has_profile_pic` | dropped | 99.1 % / 96.0 % constant — no pair inside any group can be separated by them |
+| `name`, `description` | deferred | Phase 4 text features |
+| review and geo columns | elsewhere | steps 3 and 5 own them |
+
+**`property_type` is decomposed.** Its 81 values conflate occupancy (which `room_type` already
+states, and which the group key conditions on) with building type. The occupancy prefix is
+stripped, leaving **58 building types** — rental unit 21,376, condo 6,251, home 6,245, villa
+5,711 — which unlike `room_type` vary *inside* a query group and can therefore rank.
+
+**Group-key columns are conditioners, not discriminators.** `room_type` and `city` are constant
+within almost every query group, so they separate no pair; they are carried because a tree uses
+them to condition other features. Expect them high in split counts and absent from any honest
+reading of "what makes a listing rank" — step 7 exists to keep that distinction visible.
+
+**Amenities: canonicalisation plus a 19-bucket concept map**, counts not flags. The vocabulary is
+7,029 strings with 93 % under 0.1 % prevalence; the map covers **98.9 % of 1.74 M mentions**.
+Counts because 8 of the 19 buckets are near-universal on presence (connectivity_work 99.2 %,
+air_conditioning 98.7 %, kitchen 98.2 %) where a flag is dead weight, and because a count
+subsumes a flag — a tree recovers presence by splitting at zero. The alternative encodings
+(`count`, `flags` over a pinned vocabulary) live behind one `scheme` parameter and are compared
+on **validation** NDCG in Phase 3, never on test. Full reasoning, including why a hand-weighted
+convenience score was rejected in favour of a partition, is in the decisions log (2026-08-17).
+
+## Neighbourhood aggregates (Phase 2 step 4)
+
+`features/aggregates.py`. Leave-one-out, unconditionally, over `city × neighbourhood_cleansed`
+(75 units, median 168 listings, max 5,773, **one of size 1** → NaN, never zero).
+
+**The aggregate this project does not build: a neighbourhood mean label.** Leave-one-out is
+prescribed by BUILD_GUIDE as the fix for self-inclusion, and against this group key it is not —
+it is the leak. 365 of 393 query groups sit inside a single neighbourhood, so within a group the
+total and size are constant and the LOO mean is `S/(n−1) − xᵢ/(n−1)`, an exact affine decreasing
+function of the listing's own label: **within-group Spearman exactly −1.000 in 100 % of those
+groups**. The include-self version is the mirror failure, constant within group and therefore
+ranking nothing. This extends "never aggregate the label at query-group scale" one level up,
+because with this key the neighbourhood *contains* the group. Full measurement in the decisions
+log (2026-08-17).
+
+**Built instead:** `nbhd_listings` (LOO count), `nbhd_median_price` (LOO median — the median for
+`price.py`'s skew reason), and `price_vs_nbhd`. The first two are **conditioners** — within-group
+variance ratios 0.015 and 0.034, like `room_type` and `city`. The ratio is the one that earns its
+place at 1.147 against `price`'s 0.757: it is monotone in price *within* a group, so it adds no
+local ordering, but it lets one split ("1.3× the local median") transfer across neighbourhoods
+where "price > 150" must be relearned in each.
+
+**Leave-one-out is unconditional.** The include-self gap is exactly `(xᵢ − μ)/(n−1)`, so it decays
+as 1/(n−1) — ~3 % of a listing's deviation at n = 30, 0.1 % at n = 1,000, 0.0004 on average here.
+Restricting it to small neighbourhoods buys nothing and costs a threshold, a branch, and a
+feature whose definition changes discontinuously at it.
+
+## Review sentiment — measured, and not a feature (Phase 2 step 6)
+
+**Decided 2026-08-17 before any spend.** Sentiment is a *demonstration* of the Azure AI Language
+path, not a model input. `features/sentiment.py` holds the demo aggregation and no feature block.
+
+Piloted locally at zero cost on an ephemeral environment: 80 **whole** query groups, 1,643
+listings, 14,525 reviews scored with a multilingual XLM-R sentiment model. Measured **within
+query groups** — the only comparison a pairwise ranker makes — mean ρ against the label:
+
+| signal | mean within-group ρ | median |
+| --- | ---: | ---: |
+| `review_scores_value` | **+0.128** | +0.140 |
+| `review_scores_rating` | +0.082 | +0.109 |
+| sentiment | +0.049 | +0.036 |
+| **sentiment, rating partialled out** | **+0.015** | +0.015 |
+
+**The ceiling test is the decisive one.** Among the 463 listings at rating ≥ 4.95 — where the
+rating cannot separate anything — sentiment genuinely varies (sd 0.117), so it *does* de-compress
+the ceiling. But ρ against the label among them is **−0.026**. The mechanism works and the signal
+is not there.
+
+**Aspect mining fails on coverage, not on signal.** The aspects with usable coverage are the ones
+Airbnb already ships as numeric sub-scores (clean 85.7 % of listings, location 80.7 %, median 2
+mentions each). The unrated aspects that could add something — noise 45.4 %, bed 23.7 %, parking
+17.8 %, wifi 17.5 %, AC 13.1 % — have a **median of zero mentions per listing**.
+
+> **For the write-up.** The honest headline is a negative result, and it is stronger than the
+> feature would have been: *we asked whether what guests write adds anything to the score they
+> already gave, inside the groups the ranker actually compares — and it does not.* Sentiment
+> reproduces about half the rating (ρ ≈ 0.47) and the half it does not reproduce carries no
+> demand signal. The corollary is the more interesting sentence: Airbnb's own
+> `review_scores_value` outperforms it by 2.6×, is free, and was sitting unused in the schema.
+> Shipping a feature worth +0.015 would have been decoration; measuring it before spending was
+> the point.
+
+Two rules survive the decision. **Cache raw responses before any aggregation** and **never call
+inside a loop over listings** (BUILD_GUIDE gotcha #5) — they apply to the demo run exactly as they
+would have to a production one.
+
+## The feature table (Phase 2 step 8)
+
+`features/assemble.py` is a pure transform; **`features/build.py` is the only module that writes
+`data/features/`**, exactly as `data/build.py` is the only module that writes `data/processed/`.
+Run with `uv run python -m rental_ranking.features.build`.
+
+**44,684 rows × 66 columns — 61 features**, sorted by `query_group` because LightGBM reads its
+group array positionally and never sees the ids.
+
+| role | columns |
+| --- | --- |
+| identifiers | `id`, `query_group`, `cluster_id` |
+| targets | `grade` (the LambdaMART target), `blocked_fraction_90` (carried for analysis, never an input) |
+| features | structural 11 · host 10 · amenity 20 · review 14 · neighbourhood 3 · spatial 3 |
+
+**The trainer takes its input list from `feature_columns()`, never from `table.columns`.** That
+one line is the difference between training on the features and training on the answer.
+
+Five checks raise rather than warn, each guarding a failure that yields a *working* model rather
+than an error: no `LABEL_ADJACENT_COLUMNS` member (read live from `columns.py`, so a future
+snapshot's blocklist is enforced without editing anything); no Phase-1 diagnostic (`avail_90` is
+the label's own numerator, `blocked_fraction_calendar` spans the window and the rest of the year,
+`T`/`scrape_date` identify the scrape batch); one row per listing; sorted into contiguous group
+runs; and no null identifier or target.
+
+**Nothing in the matrix is imputed.** `price` remains the project's sole imputed column. Nulls:
+the review cohort at 16.3 %, `bedrooms` 7.5 %, `beds` 3.7 %, `bathrooms_shared` 0.1 %, and the one
+lone-neighbourhood row in the aggregate block. The six review **sub**-scores carry 2–3 nulls
+beyond the never-reviewed cohort — a lone reviewer who gave an overall score and skipped the
+sub-categories — so "null iff never reviewed" holds for `review_scores_rating` and not for its
+parts.
 
 ## Azure data assets
 

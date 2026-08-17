@@ -69,10 +69,28 @@ download.py.
 # az ml data create --name raw-crete --version 2026.06.29 --type uri_folder \
 #   --path data/raw/crete/2026-06-29
 
-# Feature table, Phase 2 (the training job's input):
-# az ml data create --name features --version <v> --type uri_file \
-#   --path data/processed/feature_table.parquet
+# Feature table, Phase 2 (the training job's input). Version = build date, because the same
+# raw snapshot rebuilt after a feature change is a different table; the tags record what it
+# was built from and by, so a run tag can be traced back to both.
+# az ml data create --name features --version 2026.08.17 --type uri_file \
+#   --path data/features/feature_table.parquet \
+#   --description "44,684 ranked listings x 61 features, sorted by query_group" \
+#   --tags snapshot=2026-06-28..07-03 rows=44684 features=61 groups=393 git=$(git rev-parse --short HEAD)
 ```
+
+**Why only these two.** The processed parquets stay local and are deliberately *not* registered:
+they are a reproducible intermediate — raw plus `data/build.py` reproduces them exactly — and
+nothing in the cloud consumes them, because preprocessing runs locally and the training job takes
+the feature table. Registering them would add a third thing to version and keep in step for no
+demonstration value.
+
+**Versioning, by layer.** Raw is versioned by **snapshot date**, because that is the only thing
+that distinguishes one raw pull from another and it never changes once downloaded. The feature
+table is versioned by **build date**, because it moves for two independent reasons — a new
+snapshot *or* a feature change — and the date is the one string that increments under both. The
+tags carry what the date cannot: which snapshot it derives from and which commit built it. Every
+training run logs this version as an MLflow tag (see CLAUDE.md), so a model traces to a table, a
+table traces to a commit and a snapshot, and the chain closes.
 
 `az ml data create` with a local `--path` uploads to the workspace's Blob storage and
 registers in one step. The container is private — PII in raw is storage, not publication.
