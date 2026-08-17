@@ -1,0 +1,43 @@
+$schema: https://azuremlschemas.azureedge.net/latest/data.schema.json
+
+# The assembled feature matrix — the training job's only data input.
+#
+# VERSION IS THE BUILD DATE, not the snapshot date, because this table moves for two independent
+# reasons: a new raw snapshot, or a feature change against the same snapshot. The build date is
+# the one string that increments under both. What the date cannot say — which snapshot it derives
+# from, which commit built it — is carried in the tags below, and that is what closes the chain:
+# an MLflow run tag names this version, this version names a commit and three raw versions, and
+# the commit rebuilds the table.
+#
+# `git` is deliberately ABSENT from this file and injected at registration time. A hardcoded SHA
+# that someone forgets to bump is a wrong tag; a missing tag is merely a missing tag, and only one
+# of those silently breaks the traceability chain.
+#
+# Register:  az ml data create -f pipelines/data/feature_table.yml \
+#              -g nf-rental-ranking -w nf-rental-ranking-ws \
+#              --set tags.git=$(git rev-parse --short HEAD)
+#
+# Rebuild first with: uv run python -m rental_ranking.features.build
+
+type: uri_file
+name: features
+version: "2026.08.17"
+description: >-
+  44,684 ranked listings x 66 columns (61 features, 3 identifiers, 2 targets), one row per
+  listing, sorted by query_group into 393 contiguous groups so LightGBM's positional group array
+  aligns with row order. Target is `grade` (0-4); `blocked_fraction_90` is the underlying demand
+  proxy, carried for analysis and never a model input. No label-adjacent or Phase-1 diagnostic
+  column is present — enforced by features/assemble.py::check_feature_table.
+path: ../../data/features/feature_table.parquet
+
+tags:
+  layer: features
+  rows: "44684"
+  columns: "66"
+  features: "61"
+  query_groups: "393"
+  target: grade
+  grouping_key: city x neighbourhood x room_type x capacity_tier
+  raw_versions: athens 2026.06.28, crete 2026.06.29, thessaloniki 2026.06.29
+  built_by: rental_ranking.features.build
+  contains_pii: "false"

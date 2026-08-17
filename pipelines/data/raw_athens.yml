@@ -1,0 +1,25 @@
+$schema: https://azuremlschemas.azureedge.net/latest/data.schema.json
+
+# Raw Inside Airbnb snapshot, one asset per city per release. See raw_thessaloniki.yml for the
+# versioning rationale. Athens released a day earlier than the other two — which is exactly why
+# the three cities are separate assets rather than one folder with a single version string.
+#
+# Register:  az ml data create -f pipelines/data/raw_athens.yml \
+#              -g nf-rental-ranking -w nf-rental-ranking-ws
+
+type: uri_folder
+name: raw-athens
+version: "2026.06.28"
+description: >-
+  Inside Airbnb Athens snapshot 2026-06-28 — listings, calendar, reviews, neighbourhoods, plus
+  manifest.json carrying the source URLs and SHA-256 of each file. Unmodified as downloaded;
+  host and reviewer PII is stripped downstream by data/anonymize.py, not here.
+path: ../../data/raw/athens/2026-06-28
+
+tags:
+  city: athens
+  snapshot_date: "2026-06-28"
+  source: insideairbnb.com
+  license: CC-BY-4.0
+  contains_pii: "true"
+  layer: raw

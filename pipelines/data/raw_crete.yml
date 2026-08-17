@@ -1,0 +1,25 @@
+$schema: https://azuremlschemas.azureedge.net/latest/data.schema.json
+
+# Raw Inside Airbnb snapshot, one asset per city per release. See raw_thessaloniki.yml for the
+# versioning rationale.
+#
+# Register:  az ml data create -f pipelines/data/raw_crete.yml \
+#              -g nf-rental-ranking -w nf-rental-ranking-ws
+
+type: uri_folder
+name: raw-crete
+version: "2026.06.29"
+description: >-
+  Inside Airbnb Crete snapshot 2026-06-29 — listings, calendar, reviews, neighbourhoods, plus
+  manifest.json carrying the source URLs and SHA-256 of each file. Island-wide release covering
+  Chania, Rethymno, Heraklion and Agios Nikolaos. Unmodified as downloaded; host and reviewer
+  PII is stripped downstream by data/anonymize.py, not here.
+path: ../../data/raw/crete/2026-06-29
+
+tags:
+  city: crete
+  snapshot_date: "2026-06-29"
+  source: insideairbnb.com
+  license: CC-BY-4.0
+  contains_pii: "true"
+  layer: raw

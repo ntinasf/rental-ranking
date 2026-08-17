@@ -14,6 +14,13 @@ az login
 az configure --defaults group=nf-rental-ranking workspace=nf-rental-ranking-ws
 ```
 
+The defaults line is not optional decoration. Without it every `az ml` command needs both
+`-g nf-rental-ranking` and `-w nf-rental-ranking-ws`, and supplying only one produces a
+**misleading** error — `(ResourceGroupNotFound) Resource group 'None' could not be found`, which
+names the resource group when the missing argument is the workspace. Verify with
+`az configure --list-defaults -o table`; empty output means they were never set in this shell's
+profile. Every command below is written with both flags explicit, so it works either way.
+
 ## Resource group + workspace
 
 Created 2026-07-20 via portal. Region: **italynorth**. CLI equivalent:
@@ -56,27 +63,37 @@ Created via portal (Cost Management → Budgets): €25–30/month, alerts at 50
 ## Data assets
 
 Two layers get registered (contract: docs/data_pipeline_design.md): raw per city/snapshot,
-and later the assembled feature table (Phase 2). Registration is a one-time act per
-snapshot, done from here after inspecting the downloads — deliberately not part of
-download.py.
+and the assembled feature table (Phase 2). Registration is a one-time act per snapshot, done
+from here after inspecting the downloads — deliberately not part of download.py.
+
+**Specified in YAML, not in flags.** The four assets live in `pipelines/data/*.yml`, matching
+how the environment and training job are already specified. The deciding reason is that
+`az ml data create` **has no `--tags` argument** in the installed extension (confirm with
+`az ml data create --help`) — tags are expressible only in the YAML file, and the tags are the
+entire traceability scheme below. A second reason: `path` inside a data YAML resolves relative
+to the **YAML file**, not the working directory, so `pipelines/data/raw_athens.yml` can be run
+from anywhere in the repo and still point at the right folder.
 
 ```sh
-# Raw, once per city after download + inspection (version = snapshot date):
-# az ml data create --name raw-thessaloniki --version 2026.06.29 --type uri_folder \
-#   --path data/raw/thessaloniki/2026-06-29
-# az ml data create --name raw-athens --version 2026.06.28 --type uri_folder \
-#   --path data/raw/athens/2026-06-28
-# az ml data create --name raw-crete --version 2026.06.29 --type uri_folder \
-#   --path data/raw/crete/2026-06-29
+# Raw, once per city after download + inspection. Immutable: these YAMLs are written once.
+az ml data create -f pipelines/data/raw_thessaloniki.yml \
+  -g nf-rental-ranking -w nf-rental-ranking-ws
+az ml data create -f pipelines/data/raw_athens.yml \
+  -g nf-rental-ranking -w nf-rental-ranking-ws
+az ml data create -f pipelines/data/raw_crete.yml \
+  -g nf-rental-ranking -w nf-rental-ranking-ws
 
-# Feature table, Phase 2 (the training job's input). Version = build date, because the same
-# raw snapshot rebuilt after a feature change is a different table; the tags record what it
-# was built from and by, so a run tag can be traced back to both.
-# az ml data create --name features --version 2026.08.17 --type uri_file \
-#   --path data/features/feature_table.parquet \
-#   --description "44,684 ranked listings x 61 features, sorted by query_group" \
-#   --tags snapshot=2026-06-28..07-03 rows=44684 features=61 groups=393 git=$(git rev-parse --short HEAD)
+# Feature table (the training job's input). Rebuild, then bump `version` in the YAML to today
+# and re-register; --set injects the commit that built it.
+uv run python -m rental_ranking.features.build
+az ml data create -f pipelines/data/feature_table.yml \
+  -g nf-rental-ranking -w nf-rental-ranking-ws \
+  --set tags.git=$(git rev-parse --short HEAD)
 ```
+
+Registering an existing name+version fails rather than overwriting — assets are immutable, which
+is the property that makes a run tag worth trusting. To re-register after a change, bump the
+version.
 
 **Why only these two.** The processed parquets stay local and are deliberately *not* registered:
 they are a reproducible intermediate — raw plus `data/build.py` reproduces them exactly — and
@@ -88,12 +105,18 @@ demonstration value.
 that distinguishes one raw pull from another and it never changes once downloaded. The feature
 table is versioned by **build date**, because it moves for two independent reasons — a new
 snapshot *or* a feature change — and the date is the one string that increments under both. The
-tags carry what the date cannot: which snapshot it derives from and which commit built it. Every
-training run logs this version as an MLflow tag (see CLAUDE.md), so a model traces to a table, a
-table traces to a commit and a snapshot, and the chain closes.
+tags carry what the date cannot: `raw_versions` names the three assets it derives from and
+`git` names the commit that built it. Every training run logs the table version as an MLflow tag
+(see CLAUDE.md), so a model traces to a table, a table traces to a commit and three snapshots,
+and the chain closes.
 
-`az ml data create` with a local `--path` uploads to the workspace's Blob storage and
-registers in one step. The container is private — PII in raw is storage, not publication.
+`git` is kept out of `feature_table.yml` and injected with `--set` on purpose: a hardcoded SHA
+that someone forgets to bump is a *wrong* tag, whereas a forgotten `--set` leaves a *missing*
+tag. Only one of those breaks the chain silently.
+
+A local `path` uploads to the workspace's default Blob container (`workspaceblobstore`) and
+registers in one step — ~300 MB for the three raw folders (32/132/136 MB), 3 MB for the feature
+table. The container is private; PII in raw is storage, not publication.
 
 ## Standing rule
 
