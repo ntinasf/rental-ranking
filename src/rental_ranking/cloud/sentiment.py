@@ -1,11 +1,35 @@
-"""The one sanctioned Azure AI Language run: score one query group, cache, and stop.
+"""The Azure AI Language demonstration: score one query group, cache, and stop.
 
-**This module spends money — or rather, spends the free tier — and it is the only one that
-does.** Everything it produces is a demonstration artifact. No column it computes reaches the
-feature matrix, and ``features/sentiment.py`` records the measurement that settled that: within
-query groups sentiment adds **+0.015** over the rating, among listings at the rating ceiling it
-correlates **-0.026** with the label, and Airbnb's own ``review_scores_value`` beats it 2.6x and
-is free.
+**THIS WAS NEVER RUN. No call was ever made to Azure AI Language, and no sentiment number in
+this project comes from it.** Decided 2026-08-18, after the design was complete, tested and
+priced. Say so plainly wherever this work is described — a demonstration that was designed but
+not executed is a perfectly respectable artifact; one that is implied to have run is a lie.
+
+Three things were found while building it, in this order, and together they made the run not
+worth its remaining cost:
+
+1. **The budget was wrong by 5x.** Text records bill at 1,000 characters *rounded up, minimum
+   one per document*, so this corpus's median 195-character review costs a whole record. The
+   free tier is worth ~5,000 short reviews, not ~19,000. Caught by ``--estimate-only``.
+2. **72 % of the documents are not English** — 254 Greek, 23 accented Latin, 5 Cyrillic, 1 CJK
+   out of 393 — and sentiment analysis has no auto-detect. The first implementation hardcoded
+   ``language="en"``, which would have scored 254 Greek reviews as English and produced a
+   confident table of meaningless numbers. Fixed by the detection pass in :func:`detect_languages`,
+   at double the record cost.
+3. **The resource's region cannot do it.** ``Microsoft.CognitiveServices`` accounts *can* be
+   created in ``italynorth`` — ours was — but the sentiment capability is not offered there.
+   Region availability for a *kind* is not availability for a *feature*. Greek itself is
+   supported (``el``), and West Europe offers the capability, so the fix was a region move.
+
+Set against that, what the run would have added is **only a workflow demonstration**. The
+scientific question was already closed in Phase 2 on measurement: within query groups sentiment
+adds **+0.015** over the rating, among listings at the rating ceiling it correlates **-0.026**
+with the label, and Airbnb's own ``review_scores_value`` beats it 2.6x and is free. The project
+already demonstrates command jobs, versioned data assets and a registered environment, so a
+fourth Azure workflow demonstration was the least valuable item left in the phase.
+
+**What remains is this module, its tests, and a priced plan** — which is the honest deliverable.
+Everything below works and would run against a West Europe resource; nothing below has run.
 
 **BUILD_GUIDE gotcha #5 is the whole design.**
 
@@ -129,50 +153,97 @@ def select_documents(
     return reviews[["listing_id", "date", "text"]]
 
 
+def detect_languages(client: object, texts: list[str]) -> list[str]:
+    """Detect each document's language, because assuming English here would be badly wrong.
+
+    **Measured 2026-08-18 on the exact selection: only 28 % of the documents are English.** The
+    other 72 % are 254 Greek, 23 accented Latin (French/German/Spanish/Italian/Portuguese), 5
+    Cyrillic and 1 CJK. These are Greek cities; the reviews are written by the people who
+    stayed there.
+
+    Sentiment analysis has **no auto-detect** — omitting ``language`` silently defaults to
+    English, which would score 254 Greek reviews as though they were English and return
+    confident nonsense. The failure has no error and no obvious symptom: the demo would produce
+    a plausible table of numbers that mean nothing.
+
+    So detection is a separate first pass. It doubles the spend (393 records to 786, still 15.7 %
+    of the monthly tier) and buys correctness plus a second Azure AI Language capability in the
+    demonstration.
+
+    Returns:
+        ISO codes aligned to ``texts``, falling back to ``"en"`` for any document the service
+        could not classify.
+    """
+    codes: list[str] = []
+    for chunk in batches(texts):
+        for result in client.detect_language(documents=chunk):
+            codes.append("en" if result.is_error else result.primary_language.iso6391_name)
+    return codes
+
+
 def analyse(documents: pd.DataFrame, max_records: int = DEFAULT_MAX_RECORDS) -> list[dict]:
-    """Send the documents to Azure AI Language, ten at a time, and return flat per-review rows.
+    """Detect each document's language, then score its sentiment. Ten documents per request.
 
     **The only function in this project that makes a billable call.** It refuses to start if the
-    documents would exceed ``max_records``, because a check after the fact is not a budget.
+    work would exceed ``max_records``, because a check after the fact is not a budget. The cost
+    counted is for **both** passes — detection and sentiment — since both bill.
+
+    Documents are grouped by detected language before scoring: the sentiment API takes one
+    ``language`` per request, so a mixed batch would have to be scored under a single wrong code.
 
     Raises:
-        RuntimeError: If credentials are missing, or the batch would exceed ``max_records``.
+        RuntimeError: If credentials are missing, or the work would exceed ``max_records``.
     """
     from azure.ai.textanalytics import TextAnalyticsClient
     from azure.core.credentials import AzureKeyCredential
 
     endpoint, key = credentials()
     texts = documents["text"].tolist()
-    cost = text_records(texts)
+    cost = 2 * text_records(texts)  # detection pass + sentiment pass
     if cost > max_records:
         raise RuntimeError(
-            f"{len(texts)} documents cost {cost} text records, over the {max_records} cap "
-            f"(free tier is {FREE_TIER_RECORDS_PER_MONTH}/month). Lower --reviews-per-listing "
-            "or raise --max-records deliberately"
+            f"{len(texts)} documents cost {cost} text records across the detection and sentiment "
+            f"passes, over the {max_records} cap (free tier is {FREE_TIER_RECORDS_PER_MONTH}"
+            "/month). Lower --reviews-per-listing or raise --max-records deliberately"
         )
-    print(f"{len(texts)} documents, {cost} text records, {len(batches(texts))} requests")
 
     client = TextAnalyticsClient(endpoint=endpoint, credential=AzureKeyCredential(key))
-    ids = documents["listing_id"].tolist()
+    print(f"detecting language for {len(texts)} documents ({len(batches(texts))} requests)")
+    languages = detect_languages(client, texts)
+    mix = pd.Series(languages).value_counts()
+    print(f"  languages: {mix.head(6).to_dict()}")
+
+    frame = documents.assign(language=languages)
     rows: list[dict] = []
-    for number, (chunk, chunk_ids) in enumerate(
-        zip(batches(texts), batches(ids), strict=True), start=1
-    ):
-        results = client.analyze_sentiment(documents=chunk, language="en")
-        for listing_id, result in zip(chunk_ids, results, strict=True):
-            if result.is_error:
-                rows.append({"listing_id": listing_id, "error": result.error.message})
-                continue
-            rows.append(
-                {
-                    "listing_id": listing_id,
-                    "sentiment": result.sentiment,
-                    "positive": result.confidence_scores.positive,
-                    "neutral": result.confidence_scores.neutral,
-                    "negative": result.confidence_scores.negative,
-                }
-            )
-        print(f"  request {number}/{len(batches(texts))} -> {len(rows)} scored", flush=True)
+    for language, block in frame.groupby("language", observed=True):
+        chunks = batches(block["text"].tolist())
+        ids = batches(block["listing_id"].tolist())
+        for chunk, chunk_ids in zip(chunks, ids, strict=True):
+            for listing_id, result in zip(
+                chunk_ids,
+                client.analyze_sentiment(documents=chunk, language=language),
+                strict=True,
+            ):
+                if result.is_error:
+                    rows.append(
+                        {
+                            "listing_id": listing_id,
+                            "language": language,
+                            "error": result.error.message,
+                        }
+                    )
+                    continue
+                rows.append(
+                    {
+                        "listing_id": listing_id,
+                        "language": language,
+                        "sentiment": result.sentiment,
+                        "positive": result.confidence_scores.positive,
+                        "neutral": result.confidence_scores.neutral,
+                        "negative": result.confidence_scores.negative,
+                    }
+                )
+        print(f"  {language}: {len(block)} documents scored", flush=True)
     return rows
 
 

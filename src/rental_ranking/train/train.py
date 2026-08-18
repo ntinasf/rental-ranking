@@ -305,31 +305,35 @@ def plot_learning_curves(curves: dict[int, list[float]], iterations: list[int], 
 
 
 def _log_model(model: object, directory: Path) -> None:
-    """Log the fitted ranker, falling back to a plain booster file if the server refuses.
+    """Log the fitted ranker in **MLflow model format**, deployable either way.
 
-    **Azure ML's MLflow implementation does not serve MLflow 3's LoggedModel API.**
-    ``mlflow.lightgbm.log_model`` registers a first-class model entity via
-    ``/api/2.0/mlflow/logged-models``, and against the workspace that returns **404**, which
-    failed a run whose training had already completed and whose tags had already landed
-    (`strong_tiger_9myv0v3105`, 2026-08-18).
+    **What Azure ML does not support is narrower than it first appears.** MLflow 3 made
+    ``log_model`` register a first-class *LoggedModel* entity through
+    ``/api/2.0/mlflow/logged-models``; the workspace's MLflow server implements the 2.x API
+    surface and returns **404**, which failed a run whose training had already finished
+    (``strong_tiger_9myv0v3105``, 2026-08-18). **The model format is not the problem — only that
+    one registration call is.**
 
-    So the flavoured model is attempted first — it works locally and is what Phase 3's endpoint
-    step wants — and a raw ``booster.txt`` artifact is written when the server rejects it. The
-    model is preserved either way; only the flavour metadata is lost, and the run says so instead
-    of dying at the last step.
+    So the fallback is not a downgrade to a bare booster. ``mlflow.lightgbm.save_model`` writes a
+    complete MLmodel directory *locally, contacting no server at all*, and logging that directory
+    as run artifacts preserves the ``python_function`` flavour intact. Registering it afterwards
+    with ``az ml model create --type mlflow_model`` gives no-code deployment to a managed
+    endpoint — verified end to end on 2026-08-18. Nothing about serving is blocked.
     """
     try:
         mlflow.lightgbm.log_model(model.booster_, name="model")
-    except Exception as error:  # noqa: BLE001 — any server-side refusal must not fail the run
-        path = directory / "booster.txt"
-        model.booster_.save_model(str(path))
-        mlflow.log_artifact(str(path))
-        mlflow.set_tag("model_logging", "raw booster; MLflow model flavour unavailable")
+        return
+    except Exception as error:  # noqa: BLE001 — a server-side refusal must not fail the run
         print(
-            f"WARNING: mlflow.lightgbm.log_model failed ({type(error).__name__}: "
-            f"{str(error)[:120]}). Logged the raw booster as an artifact instead — the model is "
-            "preserved, the flavour metadata is not."
+            f"note: mlflow.lightgbm.log_model failed ({type(error).__name__}: "
+            f"{str(error)[:100]}). Saving the MLmodel directory locally and logging it as "
+            "artifacts instead — the flavour is preserved and the model stays deployable."
         )
+
+    saved = directory / "model"
+    mlflow.lightgbm.save_model(model.booster_, str(saved))
+    mlflow.log_artifacts(str(saved), artifact_path="model")
+    mlflow.set_tag("model_logging", "MLmodel directory as artifacts (LoggedModel API absent)")
 
 
 def _log_frame(frame: pd.DataFrame, name: str, directory: Path) -> None:
