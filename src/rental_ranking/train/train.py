@@ -98,6 +98,12 @@ _VERSION_YAML = PROJECT_ROOT / "pipelines" / "data" / "feature_table.yml"
 def dataset_version(path: Path = _VERSION_YAML) -> str:
     """The registered feature-table version, read from the asset YAML.
 
+    **On Azure ML this file is not present** — the job snapshot is ``src/`` alone, so
+    ``PROJECT_ROOT`` resolves to the working directory and the lookup misses. That is why
+    :func:`run` takes an explicit ``version``: a cloud run passes the value from the job YAML
+    rather than silently tagging itself ``unregistered``, which would break the one traceability
+    claim the Azure step exists to demonstrate.
+
     Regex rather than a YAML parser: ``pyyaml`` is not a declared dependency of this project and
     one pinned line does not justify adding one. Returns ``"unregistered"`` rather than raising —
     a training run must not fail because an asset file moved, but the tag must not silently claim
@@ -311,6 +317,7 @@ def run(
     split_seed: int = 0,
     params: dict[str, object] | None = None,
     log_to_mlflow: bool = True,
+    version: str | None = None,
 ) -> dict[str, pd.DataFrame]:
     """Run the whole protocol and return every table it produced.
 
@@ -405,7 +412,7 @@ def run(
         with mlflow.start_run(run_name="lambdamart-sealed-fold"):
             mlflow.set_tags(
                 {
-                    "dataset_version": dataset_version(),
+                    "dataset_version": version or dataset_version(),
                     "dataset_digest": dataset_digest(features_path),
                     "git_commit": git_commit(),
                     "protocol": f"sealed fold {SEALED_FOLD} of {folds}, CV on the rest",
@@ -536,8 +543,7 @@ def _report(tables: dict[str, pd.DataFrame]) -> None:
     for key, base in (("sealed", "reviews"), ("sealed_vs_price_rating", "price_rating")):
         for slice_name in ("overall", "n>10"):
             print(
-                "\n"
-                + headline(tables[key], f"{_SEED_PREFIX}{DEFAULT_SEEDS[0]}", base, slice_name)
+                "\n" + headline(tables[key], f"{_SEED_PREFIX}{DEFAULT_SEEDS[0]}", base, slice_name)
             )
 
 
@@ -548,6 +554,12 @@ def main() -> None:
     parser.add_argument("--folds", type=int, default=DEFAULT_FOLDS)
     parser.add_argument("--seeds", type=int, nargs="+", default=list(DEFAULT_SEEDS))
     parser.add_argument("--split-seed", type=int, default=0)
+    parser.add_argument(
+        "--dataset-version",
+        default=None,
+        help="version tag for the MLflow run. Required on Azure ML, where the asset YAML is "
+        "not in the job snapshot; locally it is read from pipelines/data/feature_table.yml",
+    )
     parser.add_argument("--learning-rate", type=float, default=None)
     parser.add_argument("--num-leaves", type=int, default=None)
     parser.add_argument("--min-data-in-leaf", type=int, default=None)
@@ -581,6 +593,7 @@ def main() -> None:
         split_seed=args.split_seed,
         params=overrides or None,
         log_to_mlflow=not args.no_mlflow,
+        version=args.dataset_version,
     )
     _report(tables)
 

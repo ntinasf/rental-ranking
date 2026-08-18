@@ -1,12 +1,17 @@
 # Azure ML training-job environment — the cloud counterpart of the local uv env.
-# Referenced from train_job.yml (image + conda_file). This file is never used
-# locally: local environments are managed by uv (uv sync / uv.lock). Conda YAML
-# is simply the manifest format Azure ML builds the job image from.
+# Referenced from train_job.yml (image + conda_file). This file is never used locally: local
+# environments are managed by uv (uv sync / uv.lock). Conda YAML is simply the manifest format
+# Azure ML builds the job image from.
 #
-# Before the first job submission:
-#   1. Pin exact versions from uv.lock so cloud training matches local.
-#   2. Uncomment azureml-mlflow (required for MLflow tracking against the workspace).
-# Training deps only — no dev tooling, no plotting libraries.
+# ONE LOGICAL ENVIRONMENT, TWO RENDERINGS. Every version below is pinned from uv.lock as of
+# 2026-08-18, so a cloud run and a local run resolve the same wheels. Re-pin before any future
+# submission — an unpinned cloud env is how "it trained differently up there" happens.
+#
+#   uv run python -c "import re,pathlib; ..."   # see the pin step in NEXT_STEPS_3.md step 5
+#
+# Training deps only — no dev tooling. `matplotlib` IS required: train.py logs the per-fold
+# learning curves as a run artifact, and that figure is evidence for the stopping-iteration
+# claim rather than decoration.
 name: rental-ranking-train
 channels:
   - conda-forge
@@ -14,9 +19,12 @@ dependencies:
   - python=3.11
   - pip
   - pip:
-      - pandas
-      - numpy
-      - scikit-learn
-      - lightgbm
-      - mlflow
-      # - azureml-mlflow  # workspace MLflow tracking
+      - pandas==2.3.3
+      - numpy==2.5.1
+      - scikit-learn==1.9.0
+      - lightgbm==4.7.0
+      - scipy==1.18.0
+      - pyarrow==24.0.0
+      - matplotlib==3.11.1
+      - mlflow==3.14.0
+      - azureml-mlflow          # routes MLflow tracking at the workspace

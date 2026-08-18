@@ -133,3 +133,51 @@ table. The container is private; PII in raw is storage, not publication.
 ## Standing rule
 
 Managed endpoints: deploy → demo → screenshot → **tear down**. Never left running.
+
+## Phase 3 — the training command job (2026-08-18)
+
+Measured prices for **italynorth**, from the Azure retail price API rather than from memory:
+
+| item | price | note |
+|---|---|---|
+| `Standard_F4s_v2` dedicated, Linux | **$0.1940/hr** | one training job ≈ 30 min ≈ **$0.10** |
+| `Standard_F4s_v2` low-priority | $0.0388/hr | 80 % cheaper, preemptible — not worth it for a one-shot demo |
+| **ACR Basic** | **$0.1666/day = $5.00/month** | created by the first environment build, and it **persists** |
+
+**The compute is not the cost; the registry is.** Running the *entire* pipeline end to end —
+data build, features, training and the whole 35-configuration sweep — is roughly 3-4 hours of
+F4s_v2, i.e. **under $1**. The ACR that the first custom-environment build creates costs 50× the
+job that created it, every month, whether or not anything else is ever submitted. It is the item
+that belongs in the teardown, not the cluster: `--min-instances 0` genuinely costs nothing idle.
+
+```bash
+# Cluster (idle costs nothing at min-instances 0)
+az ml compute create --name cpu-cluster --type amlcompute --size Standard_F4s_v2 \
+  --min-instances 0 --max-instances 1 --idle-time-before-scale-down 120 \
+  -g nf-rental-ranking -w nf-rental-ranking-ws
+
+# Re-pin the environment from uv.lock BEFORE submitting (an unpinned cloud env is how
+# "it trained differently up there" happens), then submit exactly one job.
+az ml job create -f pipelines/train_job.yml -g nf-rental-ranking -w nf-rental-ranking-ws
+```
+
+**Two things the job needed that local running did not.**
+
+1. **`matplotlib` in `environment.yml`.** `train.py` logs the per-fold learning curves as a run
+   artifact, so the cloud image needs it. The old comment said "no plotting libraries"; that
+   stopped being true when the figure became evidence rather than decoration.
+2. **`--dataset-version` passed explicitly.** The job snapshot is `src/` alone, so
+   `PROJECT_ROOT` resolves to the working directory and `pipelines/data/feature_table.yml` is
+   absent — `dataset_version()` would silently return `"unregistered"` and break the one
+   traceability claim this job exists to demonstrate.
+
+**The cloud numbers are not canonical, declared before the job finished.** LightGBM's
+multithreaded histogram construction is not order-guaranteed across a 10-thread macOS ARM build
+and a 4-vCPU Linux x86 one, so a small divergence from the local 0.7530 is a platform artifact,
+not a result. The local figures stand.
+
+### Teardown
+
+- [ ] `az ml compute delete --name cpu-cluster` — optional; min-instances 0 already bills nothing
+- [ ] **`az acr delete`** — this is the $5/month one
+- [ ] `az group delete --name nf-rental-ranking` when the project wraps — removes everything

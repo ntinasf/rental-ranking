@@ -1,32 +1,49 @@
+$schema: https://azuremlschemas.azureedge.net/latest/commandJob.schema.json
+type: command
+
 # Azure ML command job: LambdaMART training.
-# Thin wrapper over src/rental_ranking/train/lambdamart.py — no logic lives here.
+#
+# THIS IS A WORKFLOW DEMONSTRATION, NOT THE TRAINING PATH. Development, exploration and training
+# all run locally (CLAUDE.md); this job exists to show one thing end to end — a versioned data
+# asset goes in, an MLflow run carrying that version comes out. The numbers it produces are NOT
+# canonical: LightGBM's multithreaded histogram construction is not order-guaranteed across a
+# 10-thread macOS ARM build and a 4-vCPU Linux x86 one, so a small divergence from the local
+# 0.7530 is expected and is a platform artifact, not a result. **The local figures stand.**
+#
+# It re-runs the default configuration, which was already scored on the sealed fold locally. That
+# is deliberately not a third sealed read in any meaningful sense: no decision is taken from it
+# and no configuration is selected by it. Declared here so it is on the record.
 #
 # Submit with:
 #   az ml job create -f pipelines/train_job.yml
-# (after `az login` and `az configure --defaults group=<rg> workspace=<ws>`,
-#  or pass --resource-group / --workspace-name explicitly).
-#
-# Structure to fill in once training exists:
-#
-# $schema: https://azuremlschemas.azureedge.net/latest/commandJob.schema.json
-# type: command
-# display_name: lambdamart-train
-# experiment_name: rental-ranking
-#
-# code: ../src                       # uploaded snapshot; keep src importable
-# command: >-
-#   python -m rental_ranking.train.lambdamart
-#   --features ${{inputs.features}}
-#
-# inputs:
-#   features:
-#     type: uri_file                 # versioned feature-table data asset
-#     path: azureml:features@latest
-#
-# environment:                       # built from the conda manifest in this folder;
-#   image: mcr.microsoft.com/azureml/openmpi4.1.0-ubuntu22.04:latest
-#   conda_file: environment.yml      # Azure registers and versions it on first submission
-# compute: azureml:cpu-cluster       # small CPU cluster, min nodes 0
-#
-# MLflow autologging picks up the run; log the dataset version as a run tag
-# (see BUILD_GUIDE Phase 3 gotchas).
+# (after `az login` and `az configure --defaults group=nf-rental-ranking
+#  workspace=nf-rental-ranking-ws`, or pass --resource-group / --workspace-name explicitly).
+
+display_name: lambdamart-train
+experiment_name: rental-ranking
+description: >-
+  LambdaMART ranker over 44,684 listings in 393 query groups. Trains on development folds 1-4
+  and reads the sealed fold once. Demonstration of the cloud workflow; local training is the
+  real path.
+
+code: ../src                       # uploaded snapshot; keeps `rental_ranking` importable
+
+# --dataset-version is passed explicitly because the job snapshot is `src/` alone: the asset
+# YAML that carries the version locally is not present, and a run tagged "unregistered" would
+# break the traceability chain this job exists to demonstrate.
+command: >-
+  python -m rental_ranking.train.train
+  --features ${{inputs.features}}
+  --dataset-version ${{inputs.dataset_version}}
+
+inputs:
+  features:
+    type: uri_file
+    path: azureml:features@latest     # the registered asset, never a local path
+  dataset_version: "2026.08.17"
+
+environment:
+  image: mcr.microsoft.com/azureml/openmpi4.1.0-ubuntu22.04:latest
+  conda_file: environment.yml         # pinned from uv.lock 2026-08-18
+
+compute: azureml:cpu-cluster          # F4s_v2, min-instances 0 so idle costs nothing
