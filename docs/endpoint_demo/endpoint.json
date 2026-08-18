@@ -1,0 +1,6 @@
+{
+  "auth": "key",
+  "name": "rental-ranker",
+  "state": "Succeeded",
+  "uri": "https://rental-ranker.italynorth.inference.ml.azure.com/score"
+}

@@ -259,10 +259,82 @@ Run it with `uv run python -m rental_ranking.cloud.sentiment` (add `--estimate-o
 without calling). The response is cached to `data/sentiment/`, and every rerun reads the cache —
 `--refresh` is the only way to bill again, and it says so.
 
+## Step 8 — the managed online endpoint (2026-08-18)
+
+⚠ **The only resource in this project with a meter that runs while you are not looking.** An
+endpoint with no deployment costs nothing; the moment a deployment provisions an instance, it
+bills per hour regardless of traffic. Deploy → invoke → screenshot → **delete**, same session.
+
+```bash
+# 1. Local Docker smoke test FIRST — this is not ceremony, see the findings below
+az ml online-deployment create --local -f pipelines/deployment.yml
+az ml online-endpoint invoke --local --name rental-ranker --request-file request.json
+az ml online-deployment delete --local --name blue --endpoint-name rental-ranker --yes
+
+# 2. Then the real one
+az ml online-endpoint create -f pipelines/endpoint.yml
+az ml online-deployment create -f pipelines/deployment.yml --all-traffic
+
+# 3. TEAR DOWN, same session
+az ml online-endpoint delete --name rental-ranker --yes
+```
+
+**A custom scoring script, not a no-code MLflow deployment**, for three reasons: no-code returns
+raw predictions in input order rather than a ranked list keyed on `id`; it offers nowhere to
+validate a request; and the MLflow signature cannot express the five `category` columns.
+
+### What the local smoke test caught, which the roadmap put there for exactly this reason
+
+1. **`ModuleNotFoundError: No module named 'rental_ranking'`.** Azure copies
+   `code_configuration.code` to `/var/azureml-app/<dir>` and puts **only the script's own
+   directory** on `sys.path` — the package is not pip-installed. `init()` succeeded and the
+   container reported healthy; it failed at *request* time. Fixed by inserting the package root
+   into `sys.path` inside the scoring script.
+2. **`az ml online-deployment update --local` broke with `conda: error: unrecognized arguments:
+   --root`.** Delete and recreate the local deployment instead of updating it.
+3. **Model asset versions must be positive integers.** `version: "2026.08.18"` — the convention
+   used for the data assets and the environment — is rejected for *models* with
+   `Model version must be a positive integer`. **The local deployment accepted it; only the
+   cloud validates.** The build date moved to a tag.
+
+### The categorical contract, measured rather than assumed
+
+An earlier note here claimed category *code order* shifts silently at inference. **That was
+wrong**, and the measurement is worth keeping because two of three guesses failed:
+
+| claim | reality |
+|---|---|
+| Category order shifts codes → silent wrong answers | **False.** The booster stores training levels in `pandas_categorical` and re-maps *by label*. A request covering 2 of 3 levels scored identically, to 0.000000 |
+| JSON strings score fine | **False, but loud.** `object` dtype raises `train and valid dataset categorical_feature do not match` |
+| — | **The real silent bug: an unseen level.** `room_type="Houseboat"` predicts with no error, **0.1083** away from truth, because `set_categories` turns it into NaN and the model scores it as *missing* |
+
+So `serving_metadata.json` ships beside the booster and `restore_dtypes` rejects unseen levels.
+That is the one failure that would otherwise reach a caller as a confident number.
+
+### Demo captured and torn down — 2026-08-18
+
+Request/response pairs are in `docs/endpoint_demo/`: a full query group (23 listings, 61
+features), an invalid-level rejection, and a sparse request with 59 of 61 features absent.
+**Cloud scores matched local to the last digit** (rank 1 = 0.44751797704526974 in the local
+container and on the endpoint).
+
+| event | UTC |
+|---|---|
+| endpoint created (no deployment — **no charge**) | 18:46:34 |
+| deployment provisioned — **meter starts** | 19:02:46 |
+| invoked (3 requests) | 19:03:22 |
+| `az ml online-endpoint delete` issued | 19:03:51 |
+| **teardown confirmed, 0 endpoints remaining** | **19:11:44** |
+
+**Instance live ~9 minutes on `Standard_DS2_v2` at $0.1360/hr ≈ $0.02.** Note the shape of that
+timeline: **16 minutes to provision, 29 seconds of use, 8 minutes to delete.** The demo is
+cheap; what would not be cheap is forgetting the delete, at ~$98/month for one idle DS2_v2.
+The endpoint itself is free until a deployment attaches an instance.
+
 ### Teardown
 
+- [x] `az ml online-endpoint delete --name rental-ranker --yes` — **done 2026-08-18T19:11:44Z**
 - [ ] `az ml compute delete --name cpu-cluster` — optional; min-instances 0 already bills nothing
 - [ ] **`az acr delete`** — this is the $5/month one
-- [ ] `az cognitiveservices account delete --name nf-rental-language -g nf-rental-ranking` —
-      F0 is free, but one free instance per subscription is a resource worth releasing
+- [x] `az cognitiveservices account delete/purge --name nf-rental-language` — **done 2026-08-18**
 - [ ] `az group delete --name nf-rental-ranking` when the project wraps — removes everything

@@ -1,0 +1,15 @@
+$schema: https://azuremlschemas.azureedge.net/latest/managedOnlineEndpoint.schema.json
+
+# ⚠ BUILD_GUIDE gotcha #6: a managed endpoint bills per hour for its instance whether or not a
+# single request arrives. This is the only resource in the project with a meter that runs while
+# you are not looking. The rule is deploy -> invoke -> screenshot -> DELETE, same session:
+#
+#   az ml online-endpoint delete --name rental-ranker --yes
+#
+# Recorded in docs/azure_setup.md with a timestamp when done.
+
+name: rental-ranker
+description: >-
+  LambdaMART ranker for short-term rental search. Takes the candidate set for ONE query and
+  returns it ordered. Scores are only comparable within a request.
+auth_mode: key

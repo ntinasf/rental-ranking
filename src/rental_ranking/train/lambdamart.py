@@ -253,6 +253,79 @@ def predict(
     return pd.Series(scores, index=table.index, name="score")
 
 
+def serving_metadata(table: pd.DataFrame, features: Sequence[str] | None = None) -> dict:
+    """The feature order and category levels a served model needs to reproduce training inputs.
+
+    **Measured 2026-08-18, after an initial guess that was wrong in two of three parts.** What a
+    served LightGBM model actually does with categoricals:
+
+    * **Category *order* does not matter.** The booster stores the training levels in
+      ``pandas_categorical`` and re-maps an incoming ``category`` column *by label* at predict
+      time. A request covering only ``{local, unknown}`` of ``{foreign, local, unknown}`` scores
+      identically to the full frame — verified to 0.000000. The "codes shift silently" story is
+      false; LightGBM already solved it.
+    * **A plain string column fails loudly.** ``json.loads`` yields ``object`` dtype, and
+      predicting on that raises ``ValueError: train and valid dataset categorical_feature do not
+      match``. Loud is fine; it just has to be converted.
+    * **An unseen level is the one silent failure.** ``room_type="Houseboat"`` predicts without
+      complaint and lands **0.1083** away from the truth, because ``set_categories`` turns the
+      unknown label into NaN and the model scores it as *missing* rather than as *invalid*.
+
+    So this metadata exists for the third case and for column order (``Booster.predict`` on a
+    bare frame is positional). :func:`restore_dtypes` is where it is enforced.
+
+    Args:
+        table: The training frame, whose dtypes define the contract.
+        features: Column list, defaulting to ``feature_columns``.
+
+    Returns:
+        ``{"features": [...], "categories": {column: [level, ...]}}``, JSON-serialisable, to be
+        written beside the booster and read back by the scoring script.
+    """
+    columns = list(features) if features is not None else feature_columns(table)
+    categories = {
+        column: [str(level) for level in table[column].cat.categories]
+        for column in columns
+        if str(table[column].dtype) == "category"
+    }
+    return {"features": columns, "categories": categories}
+
+
+def restore_dtypes(frame: pd.DataFrame, metadata: dict) -> pd.DataFrame:
+    """Rebuild a request frame into the shape the model can score, and reject what it cannot.
+
+    The inverse of :func:`serving_metadata`, and the function a scoring script calls. It does
+    exactly two things that matter, and both were established by measurement rather than assumed:
+
+    1. **Casts the JSON-borne string columns back to ``category``.** Without this the request
+       fails loudly (``train and valid dataset categorical_feature do not match``), so this half
+       is about working at all, not about correctness.
+    2. **Rejects levels the model never saw.** This is the half that matters, because it is the
+       one path that is *silent*: ``set_categories`` maps an unknown label to NaN, the model
+       scores it as a missing value, and the caller receives a confident number **0.1083** away
+       from the truth with no indication anything was wrong.
+
+    Missing feature *columns* are a different matter and are allowed — they become NaN, which
+    LightGBM routes down a learned branch. A caller with no review scores for a brand-new
+    listing is describing the world accurately, not making a mistake.
+
+    Raises:
+        ValueError: If a categorical column carries a level absent from training.
+    """
+    rebuilt = frame.reindex(columns=metadata["features"])
+    for column, levels in metadata["categories"].items():
+        values = rebuilt[column].astype("object")
+        unseen = set(values.dropna().astype(str)) - set(levels)
+        if unseen:
+            raise ValueError(
+                f"column {column!r} carries level(s) {sorted(unseen)} the model never saw during "
+                f"training. Known levels: {levels}. Scoring them would silently treat the value "
+                "as missing rather than reject it"
+            )
+        rebuilt[column] = pd.Categorical(values, categories=levels)
+    return design_matrix(rebuilt, metadata["features"])
+
+
 def feature_importance(
     model: lgb.LGBMRanker, features: Sequence[str] | None = None
 ) -> pd.DataFrame:

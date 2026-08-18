@@ -53,3 +53,6 @@ Phase_2_lessons.md
 lessons/
 docs/azure_cli_cheatsheet.md
 data_preprocessing.py
+
+# Generated diagram, not part of the tracked deliverable
+docs/pipeline_flow.html

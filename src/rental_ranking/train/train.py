@@ -304,6 +304,30 @@ def plot_learning_curves(curves: dict[int, list[float]], iterations: list[int], 
     return path
 
 
+def export_serving_bundle(
+    model: object, table: pd.DataFrame, destination: Path, features: list[str] | None = None
+) -> Path:
+    """Write everything the endpoint needs: the booster, and the contract for its inputs.
+
+    Two files, and the second is the one people forget. ``model.lgb`` is the booster;
+    ``serving_metadata.json`` carries the feature order and the **training category levels**,
+    without which a served model silently mis-reads every categorical split — see
+    ``lambdamart.serving_metadata``.
+
+    Returns:
+        The directory written.
+    """
+    destination.mkdir(parents=True, exist_ok=True)
+    model.booster_.save_model(str(destination / "model.lgb"))
+    metadata = lm.serving_metadata(table, features)
+    (destination / "serving_metadata.json").write_text(json.dumps(metadata, indent=1))
+    print(
+        f"serving bundle -> {destination} "
+        f"({len(metadata['features'])} features, {len(metadata['categories'])} categorical)"
+    )
+    return destination
+
+
 def _log_model(model: object, directory: Path) -> None:
     """Log the fitted ranker in **MLflow model format**, deployable either way.
 

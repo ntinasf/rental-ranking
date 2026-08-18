@@ -1,0 +1,20 @@
+# Inference environment — deliberately NOT the training environment.
+#
+# The training image carries matplotlib, mlflow, scikit-learn and the Azure ML SDK; none of that
+# is reachable from a scoring request. MLflow's own exported conda.yaml for this model listed
+# **141 dependencies**, because it detected the uv project and serialised the whole lockfile.
+# An endpoint image is pulled on every scale-out, so it is worth being the minimum that answers.
+#
+# `azureml-inference-server-http` is the piece that is easy to forget: it is the HTTP server that
+# calls init()/run(), and a managed deployment without it fails at container start.
+name: rental-ranker-score
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - pip:
+      - pandas==2.3.3
+      - numpy==2.4.6
+      - lightgbm==4.7.0
+      - azureml-inference-server-http

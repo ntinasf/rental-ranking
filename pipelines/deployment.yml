@@ -1,0 +1,46 @@
+$schema: https://azuremlschemas.azureedge.net/latest/managedOnlineDeployment.schema.json
+
+# Custom scoring script rather than no-code MLflow deployment, for three reasons recorded in
+# cloud/score.py: no-code returns raw predictions in input order rather than a ranked list keyed
+# on id, it offers nowhere to validate a request, and the MLflow signature cannot express the
+# five `category` columns.
+#
+# `code` is the whole src/ tree so `import rental_ranking...` resolves; the scoring script is a
+# module inside it rather than a loose file, which keeps restore_dtypes in one place.
+
+name: blue
+endpoint_name: rental-ranker
+
+model:
+  name: rental-ranker
+  # Integer, not the dated string used for data assets and the environment: model assets are the
+  # one asset type Azure ML validates as a positive integer, and it rejects "2026.08.18". The
+  # local deployment accepted it happily — only the cloud enforces this. Build date is a tag.
+  version: "1"
+  path: ../data/train/serving_bundle
+  type: custom_model
+  tags:
+    built_on: "2026.08.18"
+    trained_from: features:2026.08.17
+    features: "61"
+    trees: "362"
+  description: >-
+    LightGBM booster plus serving_metadata.json — the feature order and the training category
+    levels. The metadata is not optional: without it an unseen categorical level scores as
+    "missing" and returns a confident answer 0.1083 away from the truth.
+
+code_configuration:
+  code: ../src
+  scoring_script: rental_ranking/cloud/score.py
+
+environment:
+  conda_file: score_environment.yml
+  image: mcr.microsoft.com/azureml/openmpi4.1.0-ubuntu22.04:latest
+
+# Smallest instance that fits. One replica: this is a demonstration, not a service.
+instance_type: Standard_DS2_v2
+instance_count: 1
+
+request_settings:
+  request_timeout_ms: 30000
+  max_concurrent_requests_per_instance: 1
