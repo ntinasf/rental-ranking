@@ -26,3 +26,9 @@ PROCESSED_DIR: Path = DATA_DIR / "processed"
 #: project registers as an Azure data asset.
 FEATURES_DIR: Path = DATA_DIR / "features"
 FEATURE_TABLE_PATH: Path = FEATURES_DIR / "feature_table.parquet"
+
+#: Phase 3 outputs. The hyperparameter search is expensive (35 configurations x 4 folds), so its
+#: results table is written once and read by notebook 04 rather than recomputed there — the same
+#: contract the feature table has: gitignored, and rebuilt by one documented command.
+TRAIN_DIR: Path = DATA_DIR / "train"
+SWEEP_RESULTS_PATH: Path = TRAIN_DIR / "sweep_results.csv"

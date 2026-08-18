@@ -25,6 +25,7 @@ config.json
 
 # Experiment tracking
 mlruns/
+mlflow.db
 
 # Data is never committed (keep only .gitkeep placeholders)
 data/*

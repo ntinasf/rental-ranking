@@ -180,3 +180,109 @@ def test_the_establishment_baseline_leads_the_value_heuristic(real_ranked: pd.Da
     ).loc["overall", "ndcg@10"]
 
     assert a > b
+
+
+# --- the Phase 3 comparators, frozen before any model exists ------------------------------------
+
+
+@pytest.fixture(scope="module")
+def real_features() -> pd.DataFrame:
+    """The shipped feature table — what Phase 3 actually trains and evaluates on.
+
+    Read from disk rather than rebuilt from the processed layer, because ``query_group`` and
+    ``cluster_id`` are positional ids: a rebuild in a different row order would produce a
+    different, equally valid fold assignment, and the frozen numbers below would not be
+    comparable to the ones training uses.
+    """
+    from rental_ranking.data.paths import FEATURE_TABLE_PATH
+
+    if not FEATURE_TABLE_PATH.exists():
+        pytest.skip("feature table not built")
+    return pd.read_parquet(FEATURE_TABLE_PATH)
+
+
+def _phase3_table(features: pd.DataFrame, sealed: bool) -> pd.DataFrame:
+    from rental_ranking.evaluate.report import comparison_table
+    from rental_ranking.train.split import assign_folds, sealed_mask
+
+    fold, _ = assign_folds(features)
+    mask = sealed_mask(fold) if sealed else ~sealed_mask(fold)
+    held = features[mask]
+    return comparison_table(
+        held["grade"],
+        held["query_group"],
+        {
+            "reviews": baseline.rank_by_reviews(held),
+            "price_rating": baseline.rank_by_price_and_rating(held, held["query_group"]),
+        },
+        reference="reviews",
+    )
+
+
+@pytest.mark.parametrize(
+    ("sealed", "slice_name", "expected"),
+    [
+        (True, "overall", {"reviews": 0.6390, "price_rating": 0.6429, "floor": 0.5519}),
+        (True, "n>10", {"reviews": 0.5951, "price_rating": 0.5859, "floor": 0.4808}),
+        (False, "overall", {"reviews": 0.6432, "price_rating": 0.6169, "floor": 0.5402}),
+        (False, "n>10", {"reviews": 0.5903, "price_rating": 0.5590, "floor": 0.4620}),
+    ],
+)
+def test_the_frozen_split_comparators_have_not_moved(
+    real_features: pd.DataFrame, sealed: bool, slice_name: str, expected: dict[str, float]
+) -> None:
+    """**The Phase 3 freeze.** Recorded 2026-08-18, before any model existed.
+
+    A model scored on the sealed fold has to be compared against baselines scored on *the same
+    groups* — measured, baseline A alone moves 0.630-0.672 across the five folds, so the
+    full-population figures are the wrong comparator for a sealed-fold result. Freezing them
+    here, before training, is what stops the comparator being computed after the model's number
+    is known and framed around it.
+    """
+    table = _phase3_table(real_features, sealed)
+    for ranker in ("reviews", "price_rating"):
+        got = table.loc[(slice_name, ranker), "ndcg@10"]
+        assert got == pytest.approx(expected[ranker], abs=0.005), ranker
+    assert table.loc[(slice_name, "reviews"), "floor"] == pytest.approx(
+        expected["floor"], abs=0.005
+    )
+
+
+def test_the_baseline_ordering_flips_on_the_sealed_fold(real_features: pd.DataFrame) -> None:
+    """Recorded so it cannot be a surprise found mid-comparison.
+
+    On the full population the establishment baseline leads the value heuristic by 0.0207. On
+    the sealed fold it does not: price+rating scores 0.6429 against reviews at 0.6390. Nothing
+    is wrong — 72 groups is a small sample and the paired interval spans zero — but a model
+    report that assumes "A is the baseline to beat" would name the wrong comparator, and the
+    honest headline compares against **both**.
+    """
+    sealed = _phase3_table(real_features, sealed=True)
+    dev = _phase3_table(real_features, sealed=False)
+
+    assert sealed.loc[("overall", "price_rating"), "vs_reviews"] > 0
+    assert dev.loc[("overall", "price_rating"), "vs_reviews"] < 0
+    # The flip is noise, not a finding: the sealed interval covers zero, the dev one does not.
+    assert (
+        sealed.loc[("overall", "price_rating"), "vs_low"]
+        < 0
+        < sealed.loc[("overall", "price_rating"), "vs_high"]
+    )
+    assert dev.loc[("overall", "price_rating"), "vs_high"] < 0
+
+
+def test_the_cutoff_slice_is_where_the_baselines_can_be_told_apart(
+    real_features: pd.DataFrame,
+) -> None:
+    """In groups of ten or fewer the metric cannot discriminate: the two frozen baselines tie
+    to four decimals on the full population (0.8069 / 0.8070) against a random floor of 0.7891,
+    while over the groups the cut-off actually cuts the floor is 0.4655. Reporting one number
+    across both averages a quarter of the metric's weight in from where nothing can be shown.
+    """
+    dev = _phase3_table(real_features, sealed=False)
+    assert dev.loc[("n<=10", "reviews"), "floor"] > 0.75
+    assert dev.loc[("n>10", "reviews"), "floor"] < 0.50
+    # The lead over the floor is roughly ten times larger where the cut-off cuts.
+    small = dev.loc[("n<=10", "reviews"), "ndcg@10"] - dev.loc[("n<=10", "reviews"), "floor"]
+    large = dev.loc[("n>10", "reviews"), "ndcg@10"] - dev.loc[("n>10", "reviews"), "floor"]
+    assert large > 5 * small
