@@ -32,3 +32,9 @@ FEATURE_TABLE_PATH: Path = FEATURES_DIR / "feature_table.parquet"
 #: contract the feature table has: gitignored, and rebuilt by one documented command.
 TRAIN_DIR: Path = DATA_DIR / "train"
 SWEEP_RESULTS_PATH: Path = TRAIN_DIR / "sweep_results.csv"
+
+#: Cached raw responses from the Azure AI Language demonstration. **Raw, and cached before any
+#: aggregation** — BUILD_GUIDE gotcha #5: re-aggregating must never re-bill, so a response goes
+#: to disk exactly as it arrived and every rerun reads it from there.
+SENTIMENT_DIR: Path = DATA_DIR / "sentiment"
+SENTIMENT_CACHE_PATH: Path = SENTIMENT_DIR / "language_responses.json"

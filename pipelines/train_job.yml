@@ -42,8 +42,9 @@ inputs:
     path: azureml:features@latest     # the registered asset, never a local path
   dataset_version: "2026.08.17"
 
-environment:
-  image: mcr.microsoft.com/azureml/openmpi4.1.0-ubuntu22.04:latest
-  conda_file: environment.yml         # pinned from uv.lock 2026-08-18
+# The registered, named environment asset — not an inline conda_file, which Azure ML would
+# store as CliV2AnonymousEnvironment. Register it first with
+#   az ml environment create -f pipelines/environment_asset.yml
+environment: azureml:rental-ranking-train@latest
 
 compute: azureml:cpu-cluster          # F4s_v2, min-instances 0 so idle costs nothing

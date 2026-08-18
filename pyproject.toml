@@ -19,6 +19,7 @@ dependencies = [
     "seaborn",
     "pyarrow>=24.0.0",
     "scipy>=1.17.1",
+    "azure-ai-textanalytics>=5.4.0",
 ]
 
 [dependency-groups]

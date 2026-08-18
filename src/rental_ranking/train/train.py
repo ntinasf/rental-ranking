@@ -304,6 +304,34 @@ def plot_learning_curves(curves: dict[int, list[float]], iterations: list[int], 
     return path
 
 
+def _log_model(model: object, directory: Path) -> None:
+    """Log the fitted ranker, falling back to a plain booster file if the server refuses.
+
+    **Azure ML's MLflow implementation does not serve MLflow 3's LoggedModel API.**
+    ``mlflow.lightgbm.log_model`` registers a first-class model entity via
+    ``/api/2.0/mlflow/logged-models``, and against the workspace that returns **404**, which
+    failed a run whose training had already completed and whose tags had already landed
+    (`strong_tiger_9myv0v3105`, 2026-08-18).
+
+    So the flavoured model is attempted first — it works locally and is what Phase 3's endpoint
+    step wants — and a raw ``booster.txt`` artifact is written when the server rejects it. The
+    model is preserved either way; only the flavour metadata is lost, and the run says so instead
+    of dying at the last step.
+    """
+    try:
+        mlflow.lightgbm.log_model(model.booster_, name="model")
+    except Exception as error:  # noqa: BLE001 — any server-side refusal must not fail the run
+        path = directory / "booster.txt"
+        model.booster_.save_model(str(path))
+        mlflow.log_artifact(str(path))
+        mlflow.set_tag("model_logging", "raw booster; MLflow model flavour unavailable")
+        print(
+            f"WARNING: mlflow.lightgbm.log_model failed ({type(error).__name__}: "
+            f"{str(error)[:120]}). Logged the raw booster as an artifact instead — the model is "
+            "preserved, the flavour metadata is not."
+        )
+
+
 def _log_frame(frame: pd.DataFrame, name: str, directory: Path) -> None:
     path = directory / f"{name}.csv"
     frame.to_csv(path)
@@ -468,7 +496,7 @@ def run(
                     ("feature_importance", importance),
                 ):
                     _log_frame(frame, name, out)
-            mlflow.lightgbm.log_model(models[seeds[0]].booster_, name="model")
+                _log_model(models[seeds[0]], out)
 
     return {
         "fold_report": fold_report,

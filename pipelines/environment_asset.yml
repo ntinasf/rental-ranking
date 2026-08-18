@@ -1,0 +1,38 @@
+$schema: https://azuremlschemas.azureedge.net/latest/environment.schema.json
+
+# The training environment as a NAMED, VERSIONED workspace asset.
+#
+# Referencing `conda_file:` inline from a job works, but Azure ML then registers it as
+# `CliV2AnonymousEnvironment` — a hash with no name, undiscoverable and unreusable by intent.
+# This file gives it the same treatment the four data assets get in pipelines/data/: a name, a
+# dated version, and tags. That is what completes the traceability chain — an MLflow run names a
+# dataset version AND an environment version, and both rebuild from this repo.
+#
+# VERSION IS THE PIN DATE, matching the feature-table asset's convention: this environment moves
+# when the pins move, which is a different clock from the code's.
+#
+# Register:  az ml environment create -f pipelines/environment_asset.yml \
+#              -g nf-rental-ranking -w nf-rental-ranking-ws
+#
+# Re-pin environment.yml from the RESOLVED local env first — see the command in its header.
+
+name: rental-ranking-train
+version: "2026.08.18"
+description: >-
+  CPU training image for the LambdaMART ranker. Pinned from the resolved local uv environment
+  (Python 3.11.15) so the cloud and local runs share one dependency set; mlflow alone differs,
+  held at 3.13.0 because azureml-mlflow requires mlflow-skinny<=3.13.0.
+
+image: mcr.microsoft.com/azureml/openmpi4.1.0-ubuntu22.04:latest
+conda_file: environment.yml
+
+tags:
+  layer: train
+  python: "3.11.15"
+  pinned_from: resolved local uv environment
+  pinned_on: "2026.08.18"
+  lightgbm: 4.7.0
+  numpy: 2.4.6
+  mlflow: 3.13.0
+  mlflow_local: 3.14.0
+  contains_pii: "false"

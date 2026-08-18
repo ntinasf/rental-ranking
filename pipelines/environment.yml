@@ -1,15 +1,21 @@
 # Azure ML training-job environment — the cloud counterpart of the local uv env.
-# Referenced from train_job.yml (image + conda_file). This file is never used locally: local
-# environments are managed by uv (uv sync / uv.lock). Conda YAML is simply the manifest format
-# Azure ML builds the job image from.
+# Referenced from train_job.yml (image + conda_file). Never used locally: local environments are
+# managed by uv (uv sync / uv.lock). Conda YAML is simply the manifest Azure ML builds from.
 #
-# ONE LOGICAL ENVIRONMENT, TWO RENDERINGS. Every version below is pinned from uv.lock as of
-# 2026-08-18, so a cloud run and a local run resolve the same wheels. Re-pin before any future
-# submission — an unpinned cloud env is how "it trained differently up there" happens.
+# ONE LOGICAL ENVIRONMENT, TWO RENDERINGS — and the pin comes from the RESOLVED environment,
+# not from a text scrape of uv.lock. That distinction cost a failed build on 2026-08-18:
+# uv.lock holds a resolution for every Python this project supports (requires-python >=3.11),
+# so it lists BOTH `numpy 2.4.6, marker python_full_version < '3.12'` AND `numpy 2.5.1, marker
+# >= '3.12'`. Pinning whichever appears first produced numpy==2.5.1 against python=3.11, and
+# pip refused it: "Could not find a version that satisfies the requirement numpy==2.5.1".
 #
-#   uv run python -c "import re,pathlib; ..."   # see the pin step in NEXT_STEPS_3.md step 5
+# Regenerate the pip block with (run it, paste the output):
+#   uv run python -c "import importlib.metadata as m; print(chr(10).join(f'      - {d}=={m.version(d)}' for d in \
+#     ['pandas','numpy','scikit-learn','lightgbm','scipy','pyarrow','matplotlib','mlflow']))"
 #
-# Training deps only — no dev tooling. `matplotlib` IS required: train.py logs the per-fold
+# Python is pinned to 3.11 to match .python-version — the markers above make that load-bearing.
+#
+# Training deps only, no dev tooling. `matplotlib` IS required: train.py logs the per-fold
 # learning curves as a run artifact, and that figure is evidence for the stopping-iteration
 # claim rather than decoration.
 name: rental-ranking-train
@@ -20,11 +26,21 @@ dependencies:
   - pip
   - pip:
       - pandas==2.3.3
-      - numpy==2.5.1
+      - numpy==2.4.6
       - scikit-learn==1.9.0
       - lightgbm==4.7.0
-      - scipy==1.18.0
+      - scipy==1.17.1
       - pyarrow==24.0.0
       - matplotlib==3.11.1
-      - mlflow==3.14.0
-      - azureml-mlflow          # routes MLflow tracking at the workspace
+      # mlflow is 3.13.0 here and 3.14.0 locally, and that divergence is deliberate:
+      # azureml-mlflow requires mlflow-skinny<=3.13.0, and pairing it with 3.14.0 produced
+      #   TypeError: azureml_artifacts_builder() got an unexpected keyword argument 'tracking_uri'
+      # after training had already finished — MLflow 3.14 passes tracking_uri into
+      # get_artifact_repository and the plugin's builder does not accept it.
+      #
+      # This is the ONE package allowed to differ from local, because it is the tracking client
+      # and takes no part in the computation. Everything that determines the numbers — python,
+      # numpy, scipy, pandas, scikit-learn, lightgbm — is identical, and the cloud run proved it
+      # by reproducing the local folds exactly: 0.7026 / 0.7632 / 0.7078 / 0.7119.
+      - mlflow==3.13.0
+      - azureml-mlflow==1.62.0.post5   # routes MLflow tracking at the workspace

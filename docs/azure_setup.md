@@ -171,13 +171,98 @@ az ml job create -f pipelines/train_job.yml -g nf-rental-ranking -w nf-rental-ra
    absent — `dataset_version()` would silently return `"unregistered"` and break the one
    traceability claim this job exists to demonstrate.
 
-**The cloud numbers are not canonical, declared before the job finished.** LightGBM's
-multithreaded histogram construction is not order-guaranteed across a 10-thread macOS ARM build
-and a 4-vCPU Linux x86 one, so a small divergence from the local 0.7530 is a platform artifact,
-not a result. The local figures stand.
+**On cloud-versus-local numbers — the caveat was declared in advance and turned out to be
+unnecessary.** Before the first run I recorded that LightGBM's multithreaded histogram
+construction is not order-guaranteed across a 10-thread macOS ARM build and a 4-vCPU Linux x86
+one, so a divergence from the local 0.7530 should be read as a platform artifact.
+
+**No divergence occurred.** The cloud reproduced the development folds exactly —
+`0.7026 / 0.7632 / 0.7078 / 0.7119`, stopping at `514 / 718 / 158 / 211`, median 362 — and the
+run's `dataset_digest` (`8c74b2840854`) matched the local one, proving the same bytes were read.
+Determinism held across platform, architecture and thread count. The caveat is kept here rather
+than deleted because declaring it before the fact is what made the check meaningful, but it
+should not be repeated as though it were a live risk.
+
+### The first submission failed, and the reason is worth keeping
+
+`clever_wheel_m2qlw8szhf` failed in the image build:
+
+```
+ERROR: Could not find a version that satisfies the requirement numpy==2.5.1
+ERROR: Ignored the following versions that require a different python version:
+       2.5.1 Requires-Python >=3.12
+CondaEnvException: Pip failed
+```
+
+**"Pin from uv.lock" is not a text operation.** `requires-python = ">=3.11"`, so uv.lock carries
+a resolution for *every* supported interpreter — it lists both
+
+```
+{ name = "numpy", version = "2.4.6", marker = "python_full_version < '3.12'" }
+{ name = "numpy", version = "2.5.1", marker = "python_full_version >= '3.12'" }
+```
+
+Scraping the first version string per package silently selected the 3.12 branch and pinned it
+against `python=3.11`. Two packages were wrong the same way: `numpy` (2.5.1 → **2.4.6**) and
+`scipy` (1.18.0 → **1.17.1**).
+
+The correct source is the **resolved** environment — the lock as this interpreter actually
+solved it — which is what the regenerate command in `environment.yml` now reads. Local is
+Python 3.11.15, so the conda pin of `python=3.11` is load-bearing, not cosmetic.
+
+**A failed build still creates the registry.** The ACR (`Basic`) existed after this failure even
+though no job ever ran, so the $5/month meter starts at the first *attempt*, not the first
+success. Budget from submission, not from completion.
+
+### Three real incompatibilities, found by three failed jobs
+
+The demonstration is one job; getting there took four submissions and about $0.40 of compute.
+Each failure was a genuine incompatibility rather than a typo, and each is worth keeping.
+
+1. **`clever_wheel_m2qlw8szhf` — the marker-blind pin** (see above). `numpy==2.5.1` against
+   `python=3.11`. Build failed.
+2. **`green_pen_d7rtlkmmwd` — `azureml-mlflow` requires `mlflow-skinny<=3.13.0`.** We pinned
+   `mlflow==3.14.0`, and MLflow 3.14 passes `tracking_uri` into `get_artifact_repository`, which
+   the plugin's builder does not accept: `TypeError: azureml_artifacts_builder() got an
+   unexpected keyword argument 'tracking_uri'`. **Training had already finished** when it fired.
+   Fixed by holding the cloud at `mlflow==3.13.0` — the one package allowed to differ from local,
+   because it is the tracking client and takes no part in the computation.
+3. **`strong_tiger_9myv0v3105` — Azure ML does not serve MLflow 3's LoggedModel API.**
+   `mlflow.lightgbm.log_model` posts to `/api/2.0/mlflow/logged-models`, which returns **404**
+   against the workspace. Again the run had completed and its tags had landed; only the last line
+   failed. Fixed by attempting the flavoured model and falling back to a raw `booster.txt`
+   artifact with an explanatory tag.
+
+**Consequence for step 8:** deploying an MLflow-flavoured model to a managed endpoint was the
+clean path and may not be available. Expect the scoring script to load the booster directly.
+
+## The sentiment demonstration resource (step 6)
+
+```bash
+az cognitiveservices account create --name nf-rental-language --kind TextAnalytics --sku F0 \
+  --location italynorth -g nf-rental-ranking --custom-domain nf-rental-language --yes
+
+# Endpoint and key -> .env (gitignored). Never commit them.
+az cognitiveservices account show --name nf-rental-language -g nf-rental-ranking \
+  --query properties.endpoint -o tsv
+az cognitiveservices account keys list --name nf-rental-language -g nf-rental-ranking \
+  --query key1 -o tsv
+```
+
+**F0 is free and stays free**, but the budget is smaller than the pricing page suggests. Azure
+bills a text record per 1,000 characters **rounded up, minimum one per document**. This corpus
+has a median review of 195 characters, so nearly every review costs a whole record — 5,000
+records/month is worth about **5,000 short reviews, not 19,000**. The planned run is query group
+24: 23 listings, 393 reviews, **393 records (7.9 % of the month), 40 requests**.
+
+Run it with `uv run python -m rental_ranking.cloud.sentiment` (add `--estimate-only` to price it
+without calling). The response is cached to `data/sentiment/`, and every rerun reads the cache —
+`--refresh` is the only way to bill again, and it says so.
 
 ### Teardown
 
 - [ ] `az ml compute delete --name cpu-cluster` — optional; min-instances 0 already bills nothing
 - [ ] **`az acr delete`** — this is the $5/month one
+- [ ] `az cognitiveservices account delete --name nf-rental-language -g nf-rental-ranking` —
+      F0 is free, but one free instance per subscription is a resource worth releasing
 - [ ] `az group delete --name nf-rental-ranking` when the project wraps — removes everything
