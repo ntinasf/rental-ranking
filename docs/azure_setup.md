@@ -426,7 +426,13 @@ Screenshots kept in `docs/screenshots/`:
 | `console_loss_kypseli.png` | 15 listings, **0.6040** against a **0.6563** floor — the model loses |
 | `console_chania_hotel.png` | 18 listings, 0.7847, a mid case |
 | `endpoint_container_logs.png` | `POST /score 200` with latencies, from the deployment log |
-| `train_job_metrics.png` | the Azure ML training run's logged metrics |
+| `train_job_overview.png` | the training run's Overview tab — the reproducibility claim in one frame: data asset `features:2026.08.17`, registered environment `rental-ranking-train:2026.08.18`, git branch and commit, and the `protocol: sealed fold 0 of 5` tag |
+| `train_job_metrics.png` | the same run's logged metrics |
+
+The Overview shot also exposes a small logging gap worth fixing before the next cloud run: the
+MLflow tag reads `git_commit : unknown` while Azure's own Git field carries the real SHA. The job
+runs from a code snapshot with no `.git`, so the tag has nothing to read; passing the commit as a
+job parameter at submit time is the fix.
 
 **Teardown.** `az ml online-endpoint delete` issued at the end of the session; verified absent
 afterwards — `az ml online-deployment list` returns `ParentResourceNotFound` and

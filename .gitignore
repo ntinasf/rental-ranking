@@ -49,13 +49,15 @@ rules_of_ml.md
 NEXT_STEPS.md
 NEXT_STEPS_2.md
 NEXT_STEPS_3.md
+NEXT_STEPS_4.md
 Phase_2_lessons.md
 lessons/
 docs/azure_cli_cheatsheet.md
 data_preprocessing.py
 
-# Generated diagram, not part of the tracked deliverable
+# Generated diagrams, not part of the tracked deliverable
 docs/pipeline_flow.html
+docs/ab_traffic_split.html
 
 # Reference papers read while designing. Copyrighted by their publishers — cited in
 # docs/ab_test_design.md, never redistributed.
