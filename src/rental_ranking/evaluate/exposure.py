@@ -261,6 +261,7 @@ def main() -> None:
     """Print the exposure tables and write them, in the pattern of the sweep results."""
     from rental_ranking.cloud import demo
     from rental_ranking.data import paths
+    from rental_ranking.train import split
 
     population = demo.ranked_table()
     sealed = demo.sealed_table()
@@ -300,10 +301,192 @@ def main() -> None:
     )
     print(widening.round(4).to_string())
 
+    # --- the two retrieval policies, over the same broad searches -----------------------------
+    development = population[population["fold"] != split.SEALED_FOLD]
+    prior = demand_prior(development)
+    universe = rung_labels(sealed, groups.GROUP_CASCADE[1][1])
+
+    arms = []
+    for k_geo in (1, 2, 3, 5):
+        table = simulate_arms(sealed, scores, universe, prior, k_geo=k_geo)
+        arms.append(table.assign(k_geo=k_geo).reset_index(names="arm"))
+    simulation = pd.concat(arms).set_index(["k_geo", "arm"]).sort_index()
+
+    print(
+        f"\nfirst screen under each retrieval policy, broad searches "
+        f"({int(universe.nunique())} of them), k={DEFAULT_K}\n"
+    )
+    print(simulation.round(4).to_string())
+
     paths.TRAIN_DIR.mkdir(parents=True, exist_ok=True)
-    destination = paths.TRAIN_DIR / "exposure.csv"
-    profile.join(widening, how="outer", rsuffix="_sealed").to_csv(destination)
-    print(f"\nwritten: {destination}")
+    profile.join(widening, how="outer", rsuffix="_sealed").to_csv(paths.TRAIN_DIR / "exposure.csv")
+    simulation.to_csv(paths.TRAIN_DIR / "retrieval_arms.csv")
+    print(
+        f"\nwritten: {paths.TRAIN_DIR / 'exposure.csv'}, {paths.TRAIN_DIR / 'retrieval_arms.csv'}"
+    )
+
+
+# --- simulating the two retrieval policies -----------------------------------------------------
+
+
+def demand_prior(
+    training: pd.DataFrame,
+    geo_column: str = GEO_COLUMN,
+    target: str = "grade",
+) -> pd.Series:
+    """Historical demand per neighbourhood, for choosing where to look before ranking.
+
+    The stand-in for a personalised destination model: with no user signal, the best available
+    guess at where a guest should be shown listings is where listings have historically been in
+    demand. It is a **prior over geographies**, not a feature — no listing sees it.
+
+    **Fit this on training data only.** It is derived from the target, so a prior fitted on the
+    population it will be evaluated against leaks the answer into the arm being measured.
+
+    Args:
+        training: Listings whose target may be read — never the evaluation population.
+        geo_column: Geography to score.
+        target: Column to average. ``grade`` by construction, since it is the ranked quantity.
+
+    Returns:
+        Float Series indexed by ``(city, geo)``, plus a ``(city, None)`` entry per city holding the
+        city mean, which is the fallback for a geography the training data never saw.
+    """
+    require_columns(training, ("city", geo_column, target), "training listings")
+    by_geo = training.groupby(["city", geo_column], observed=True)[target].mean()
+    by_city = training.groupby("city", observed=True)[target].mean()
+    fallback = pd.Series(
+        by_city.to_numpy(),
+        index=pd.MultiIndex.from_product([by_city.index, [None]], names=by_geo.index.names),
+    )
+    return pd.concat([by_geo, fallback]).rename("demand_prior")
+
+
+def select_geographies(
+    candidates: pd.DataFrame,
+    prior: pd.Series,
+    k_geo: int,
+    geo_column: str = GEO_COLUMN,
+) -> pd.Series:
+    """Boolean mask keeping only listings in the ``k_geo`` highest-prior neighbourhoods.
+
+    The narrowing step. A geography absent from the prior falls back to its city's mean rather
+    than being dropped, so a neighbourhood the training data never saw is treated as average
+    instead of being silently excluded from every search.
+    """
+    require_columns(candidates, ("city", geo_column), "candidates")
+    keys = pd.MultiIndex.from_arrays([candidates["city"], candidates[geo_column]])
+    scored = prior.reindex(keys)
+    city_fallback = prior.reindex(
+        pd.MultiIndex.from_arrays([candidates["city"], [None] * len(candidates)])
+    )
+    scored = pd.Series(
+        np.where(scored.isna(), city_fallback.to_numpy(), scored.to_numpy()),
+        index=candidates.index,
+    )
+
+    ranked_geos = (
+        pd.DataFrame({"geo": candidates[geo_column].to_numpy(), "prior": scored.to_numpy()})
+        .groupby("geo", observed=True, dropna=False)["prior"]
+        .first()
+        .nlargest(k_geo)
+        .index
+    )
+    return candidates[geo_column].isin(ranked_geos).rename("selected")
+
+
+def screen_composition(
+    listings: pd.DataFrame,
+    scores: pd.Series,
+    group: pd.Series,
+    k: int = DEFAULT_K,
+    geo_column: str = GEO_COLUMN,
+) -> pd.DataFrame:
+    """What the first screen contains — the one thing that *is* comparable across policies.
+
+    **This is why there is no NDCG here.** NDCG normalises by the candidate set, so it changes
+    meaning the moment the set changes and cannot compare two retrieval policies. The first screen
+    is *k* listings under either policy, so its composition is unnormalised and directly
+    comparable: the same question a guest would ask, which is whether the ten things in front of
+    them are any good.
+
+    Returns:
+        One row per group: ``shown``, ``mean_grade``, ``relevant_share`` (grade >= 3),
+        ``distinct_geos``, ``cold_share``, ``deserving_cold_share``.
+    """
+    require_columns(listings, ("grade", "has_reviews", geo_column), "candidates")
+    frame = pd.DataFrame(
+        {
+            "grade": listings["grade"].to_numpy(),
+            "cold": ~listings["has_reviews"].to_numpy().astype(bool),
+            "geo": listings[geo_column].to_numpy(),
+            "score": scores.to_numpy(),
+            "group": group.to_numpy(),
+        }
+    )
+    rows = []
+    for name, block in frame.groupby("group", observed=True, sort=False):
+        top = block.nlargest(k, "score", keep="first")
+        rows.append(
+            {
+                "group": name,
+                "shown": int(len(top)),
+                "mean_grade": float(top["grade"].mean()),
+                "relevant_share": float(top["grade"].ge(RELEVANT_GRADE).mean()),
+                "distinct_geos": int(top["geo"].nunique(dropna=False)),
+                "cold_share": float(top["cold"].mean()),
+                "deserving_cold_share": float(
+                    (top["cold"] & top["grade"].ge(RELEVANT_GRADE)).mean()
+                ),
+            }
+        )
+    return pd.DataFrame(rows).set_index("group")
+
+
+def simulate_arms(
+    candidates: pd.DataFrame,
+    scores: pd.Series,
+    universe: pd.Series,
+    prior: pd.Series,
+    k_geo: int,
+    k: int = DEFAULT_K,
+    geo_column: str = GEO_COLUMN,
+) -> pd.DataFrame:
+    """Both retrieval policies over the same broad searches, ranked by the same model.
+
+    A broad search is one that names a city, a room type and a party size but no neighbourhood.
+    ``universe`` is the set that search could return.
+
+    * **Control** ranks the whole universe and shows the top *k*. No geographic narrowing.
+    * **Treatment** keeps the ``k_geo`` highest-prior neighbourhoods, ranks those, shows the top
+      *k*.
+
+    The **ranker is identical in both arms**; only the candidate set differs. That is what makes
+    the comparison attributable to the retrieval policy rather than to the model.
+
+    Returns:
+        Two rows, ``control`` and ``treatment``, averaging :func:`screen_composition` over
+        searches, plus ``searches`` and ``median_candidates``.
+    """
+    frame = candidates.assign(_score=scores.to_numpy(), _universe=universe.to_numpy())
+
+    kept = []
+    for _, block in frame.groupby("_universe", observed=True, sort=False):
+        kept.append(block[select_geographies(block, prior, k_geo, geo_column).to_numpy()])
+    narrowed = pd.concat(kept)
+
+    rows = {}
+    for arm, subset in (("control", frame), ("treatment", narrowed)):
+        composition = screen_composition(
+            subset, subset["_score"], subset["_universe"], k=k, geo_column=geo_column
+        )
+        sizes = subset.groupby("_universe", observed=True).size()
+        rows[arm] = {
+            "searches": int(len(composition)),
+            "median_candidates": int(sizes.median()),
+            **composition.mean(numeric_only=True).drop("shown").to_dict(),
+        }
+    return pd.DataFrame(rows).T
 
 
 if __name__ == "__main__":

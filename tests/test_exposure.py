@@ -220,3 +220,173 @@ def test_rung_labels_align_to_the_frame_they_were_given() -> None:
     labels = exposure.rung_labels(population, ["city", "room_type"])
     assert labels.index.equals(population.index)
     assert labels.nunique() == 1
+
+
+# --- the demand prior ---------------------------------------------------------------------------
+
+
+def _training() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "city": ["athens"] * 6,
+            "neighbourhood_cleansed": ["plaka"] * 3 + ["exarchia"] * 3,
+            "grade": [4, 4, 4, 1, 1, 1],
+        }
+    )
+
+
+def test_the_prior_ranks_neighbourhoods_by_historical_demand() -> None:
+    prior = exposure.demand_prior(_training())
+    assert prior[("athens", "plaka")] == 4.0
+    assert prior[("athens", "exarchia")] == 1.0
+
+
+def test_the_prior_carries_a_city_fallback_for_unseen_neighbourhoods() -> None:
+    """A neighbourhood the training data never saw must be treated as average, not silently
+    excluded from every search the system runs."""
+    prior = exposure.demand_prior(_training())
+    assert prior[("athens", None)] == pytest.approx(2.5)
+
+
+def test_the_prior_refuses_a_frame_without_the_target() -> None:
+    with pytest.raises(KeyError):
+        exposure.demand_prior(_training().drop(columns="grade"))
+
+
+# --- narrowing ------------------------------------------------------------------------------------
+
+
+def _universe() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "city": ["athens"] * 6,
+            "neighbourhood_cleansed": [
+                "plaka",
+                "plaka",
+                "exarchia",
+                "exarchia",
+                "kypseli",
+                "kypseli",
+            ],
+        }
+    )
+
+
+def test_narrowing_keeps_only_the_highest_prior_neighbourhoods() -> None:
+    prior = pd.Series(
+        {
+            ("athens", "plaka"): 4.0,
+            ("athens", "exarchia"): 3.0,
+            ("athens", "kypseli"): 1.0,
+            ("athens", None): 2.0,
+        }
+    )
+    kept = exposure.select_geographies(_universe(), prior, k_geo=2)
+    assert kept.tolist() == [True, True, True, True, False, False]
+
+
+def test_a_neighbourhood_absent_from_the_prior_falls_back_rather_than_vanishing() -> None:
+    """Dropping it would remove that neighbourhood from every search the system ever serves —
+    a supply-side harm invisible in any guest-side metric."""
+    prior = pd.Series({("athens", "plaka"): 0.1, ("athens", None): 9.0})
+    kept = exposure.select_geographies(_universe(), prior, k_geo=1)
+    assert kept.sum() == 2
+    assert not kept.iloc[0]  # plaka's own low prior loses to the two fallbacks
+
+
+def test_narrowing_to_more_geographies_than_exist_keeps_everything() -> None:
+    prior = pd.Series({("athens", None): 1.0})
+    assert exposure.select_geographies(_universe(), prior, k_geo=99).all()
+
+
+# --- the first screen ---------------------------------------------------------------------------------
+
+
+def _screen() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "grade": [4, 3, 2, 0],
+            "has_reviews": [True, False, True, False],
+            "neighbourhood_cleansed": ["plaka", "plaka", "exarchia", "exarchia"],
+        }
+    )
+
+
+def test_the_screen_is_composition_not_a_normalised_metric() -> None:
+    """The point of the whole module: a normalised metric cannot compare two retrieval policies
+    because it divides by the candidate set. Ten listings shown is ten listings shown."""
+    out = exposure.screen_composition(
+        _screen(), pd.Series([4.0, 3.0, 2.0, 1.0]), pd.Series(["g"] * 4), k=2
+    )
+    assert out.loc["g", "shown"] == 2
+    assert out.loc["g", "mean_grade"] == 3.5
+    assert out.loc["g", "relevant_share"] == 1.0
+    assert out.loc["g", "distinct_geos"] == 1
+    assert out.loc["g", "cold_share"] == 0.5
+    assert out.loc["g", "deserving_cold_share"] == 0.5
+
+
+def test_a_screen_shorter_than_k_reports_what_it_actually_showed() -> None:
+    out = exposure.screen_composition(
+        _screen(), pd.Series([4.0, 3.0, 2.0, 1.0]), pd.Series(["g"] * 4), k=99
+    )
+    assert out.loc["g", "shown"] == 4
+    assert out.loc["g", "mean_grade"] == 2.25
+
+
+# --- the two arms ---------------------------------------------------------------------------------
+
+
+def _broad() -> tuple[pd.DataFrame, pd.Series, pd.Series, pd.Series]:
+    candidates = pd.DataFrame(
+        {
+            "city": ["athens"] * 6,
+            "neighbourhood_cleansed": [
+                "plaka",
+                "plaka",
+                "exarchia",
+                "exarchia",
+                "kypseli",
+                "kypseli",
+            ],
+            "grade": [4, 3, 2, 2, 1, 0],
+            "has_reviews": [True, False, True, True, True, True],
+        }
+    )
+    scores = pd.Series([6.0, 5.0, 4.0, 3.0, 2.0, 1.0])
+    universe = pd.Series(["broad"] * 6)
+    prior = pd.Series(
+        {
+            ("athens", "plaka"): 3.5,
+            ("athens", "exarchia"): 2.0,
+            ("athens", "kypseli"): 0.5,
+            ("athens", None): 2.0,
+        }
+    )
+    return candidates, scores, universe, prior
+
+
+def test_both_arms_are_ranked_by_the_same_model() -> None:
+    """The experiment attributes its effect to the retrieval policy. If the arms differed in the
+    ranker too, nothing could be attributed to either."""
+    candidates, scores, universe, prior = _broad()
+    out = exposure.simulate_arms(candidates, scores, universe, prior, k_geo=1, k=2)
+
+    assert out.loc["control", "searches"] == out.loc["treatment", "searches"] == 1
+    assert out.loc["control", "median_candidates"] == 6
+    assert out.loc["treatment", "median_candidates"] == 2  # plaka only
+
+
+def test_narrowing_bounds_the_geographies_the_screen_can_show() -> None:
+    """Worth pinning because the intuition runs the other way: narrowing to k geographies cannot
+    increase geographic spread, it caps it."""
+    candidates, scores, universe, prior = _broad()
+    for k_geo in (1, 2, 3):
+        out = exposure.simulate_arms(candidates, scores, universe, prior, k_geo=k_geo, k=6)
+        assert out.loc["treatment", "distinct_geos"] <= k_geo
+
+
+def test_narrowing_to_everything_reproduces_the_control_arm() -> None:
+    candidates, scores, universe, prior = _broad()
+    out = exposure.simulate_arms(candidates, scores, universe, prior, k_geo=99, k=3)
+    assert out.loc["treatment", "mean_grade"] == out.loc["control", "mean_grade"]
