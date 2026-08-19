@@ -56,3 +56,7 @@ data_preprocessing.py
 
 # Generated diagram, not part of the tracked deliverable
 docs/pipeline_flow.html
+
+# Reference papers read while designing. Copyrighted by their publishers — cited in
+# docs/ab_test_design.md, never redistributed.
+*.pdf
