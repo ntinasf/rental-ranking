@@ -95,6 +95,22 @@ uv run python -m rental_ranking.cloud.demo --capture --local     # rewrites RESU
 `--local` calls the same `init()`/`run()` the container calls, on the same bundle. It is the
 reference the cloud responses were diffed against.
 
+## What it looked like live
+
+Screenshots in [`../screenshots/`](../screenshots/), from the 2026-08-19 session:
+
+| | |
+|---|---|
+| [`console_win_kalamaria.png`](../screenshots/console_win_kalamaria.png) | 43 listings, **0.8785** against a 0.6163 floor, top three all grade 4 |
+| [`console_loss_kypseli.png`](../screenshots/console_loss_kypseli.png) | 15 listings, **0.6040** against a **0.6563** floor — beaten by both baselines and by chance |
+| [`endpoint_container_logs.png`](../screenshots/endpoint_container_logs.png) | `POST /score 200` at **12.9–14.5 ms**, `Python-urllib/3.11`, among the platform's health probes |
+
+The losing case is the useful one, and its cause is measurable: group 161 is fifteen listings graded
+`{1:×1, 2:×7, 3:×6, 4:×1}`, so thirteen of fifteen are a 2 or a 3 and two-thirds of the group reaches
+the top ten whatever the ordering. The floor sits at 0.6563 and the total spread between best and
+worst ranker is 0.08. The model is being measured on a query with almost nothing to order — which is
+why the estimate is 72 groups with an interval, not one query. Notebook 04 §10 works through it.
+
 ## Running it as a container
 
 ```bash

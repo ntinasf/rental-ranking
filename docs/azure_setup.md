@@ -393,3 +393,42 @@ prints the corrected one. Take it from the CLI rather than the portal:
 ```bash
 az ml online-endpoint show --name rental-ranker --query scoring_uri -o tsv
 ```
+
+### The live run (2026-08-19) — evidence and what it measured
+
+Second deployment, to exercise the rebuilt demonstration against a real endpoint. Captured in
+`docs/endpoint_demo/RESULTS.md` and `docs/screenshots/`.
+
+**Cloud reproduced local to the last bit.** Not "close": `max |score difference| = 0.0` across all
+three query groups, identical ordering. Notebook 04 §10 recomputes this rather than asserting it.
+Third independent confirmation, after the training job and the first invocation — the pre-declared
+platform-drift caveat was never needed.
+
+| query | endpoint | reviews | price+rating | random |
+|---|---|---|---|---|
+| athens (79, n=29) | 0.5976 | 0.4063 | 0.4384 | 0.3852 |
+| crete (305, n=25) | 0.7962 | 0.7494 | 0.7550 | 0.5587 |
+| thessaloniki (24, n=23) | 0.8095 | 0.6081 | 0.4128 | 0.5743 |
+
+**Inference latency, from the container's own log:** `POST /score 200` at **12.9–14.5 ms** on
+`Standard_DS2_v2`, the smallest instance offered — for candidate sets of 23 to 29 listings. Nothing
+about this model is expensive to serve. The log also shows the platform's `kube-probe` GETs every
+10 s, which is what a healthy deployment's idle traffic looks like.
+
+**One client-side failure, no code wrong:** the Studio Swagger URI pasted in place of the REST
+endpoint. See the gotcha above; `demo.endpoint_address` now refuses it.
+
+Screenshots kept in `docs/screenshots/`:
+
+| file | what it shows |
+|---|---|
+| `console_win_kalamaria.png` | 43 listings, **0.8785** against a 0.6163 floor, top three all grade 4 |
+| `console_loss_kypseli.png` | 15 listings, **0.6040** against a **0.6563** floor — the model loses |
+| `console_chania_hotel.png` | 18 listings, 0.7847, a mid case |
+| `endpoint_container_logs.png` | `POST /score 200` with latencies, from the deployment log |
+| `train_job_metrics.png` | the Azure ML training run's logged metrics |
+
+**Teardown.** `az ml online-endpoint delete` issued at the end of the session; verified absent
+afterwards — `az ml online-deployment list` returns `ParentResourceNotFound` and
+`az ml online-endpoint list` is empty. The ACR (~$5/month) and the min-instances-0 compute cluster
+are all that remain, and the cluster bills nothing idle.
