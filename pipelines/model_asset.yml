@@ -1,0 +1,26 @@
+$schema: https://azuremlschemas.azureedge.net/latest/model.schema.json
+
+# Register the serving bundle once, deploy from it many times. Split out of deployment.yml on
+# 2026-08-19: an inline model definition re-uploads the bundle on every deployment and conflicts
+# with itself when the name:version already exists, which is exactly the state a second
+# demonstration starts from.
+#
+#   az ml model create -f pipelines/model_asset.yml
+#
+# Version is an INTEGER. Data assets and environments in this project use dated strings
+# ("2026.08.18"); model assets are the one type Azure ML rejects them for — and the *local*
+# deployment accepts a dated string happily, so only the cloud catches it.
+
+name: rental-ranker
+version: "1"
+path: ../data/train/serving_bundle
+type: custom_model
+tags:
+  built_on: "2026.08.18"
+  trained_from: features:2026.08.17
+  features: "61"
+  trees: "362"
+description: >-
+  LightGBM booster plus serving_metadata.json — the feature order and the training category
+  levels. The metadata is not optional: without it an unseen categorical level scores as
+  "missing" and returns a confident answer 0.1083 away from the truth.

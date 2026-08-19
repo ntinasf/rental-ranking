@@ -58,6 +58,7 @@ Full runbook with timings and the meter discipline: `docs/azure_setup.md`, step 
 
 ```bash
 # 1. deploy — the endpoint itself is free; the deployment provisions the billed instance (~15 min)
+az ml model create -f pipelines/model_asset.yml   # only if rental-ranker:1 is not registered
 az ml online-endpoint  create -f pipelines/endpoint.yml
 az ml online-deployment create -f pipelines/deployment.yml --all-traffic
 
