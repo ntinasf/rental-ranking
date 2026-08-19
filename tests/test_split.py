@@ -270,3 +270,68 @@ def test_shipped_feature_table_splits_without_leakage() -> None:
     assert report["row_share"].max() - report["row_share"].min() < 0.001
     assert fold.groupby(frame.cluster_id).nunique().max() == 1
     assert fold.groupby(frame.query_group).nunique().max() == 1
+
+
+# --- representativeness of the holdout ------------------------------------------------------------
+
+
+def _located() -> pd.DataFrame:
+    """Two neighbourhoods: one the sealed fold covers, one it does not."""
+    return pd.DataFrame(
+        {
+            "city": ["athens"] * 6,
+            "neighbourhood_cleansed": ["plaka"] * 3 + ["kypseli"] * 3,
+            "query_group": [0, 0, 1, 2, 2, 3],
+        }
+    )
+
+
+def _folds() -> pd.Series:
+    # plaka has one sealed row; kypseli has none.
+    return pd.Series([split.SEALED_FOLD, 1, 2, 1, 2, 3])
+
+
+def test_geography_coverage_reports_what_the_split_did_not_balance_on() -> None:
+    """The strata are city and group-size band, so neighbourhood coverage is incidental — and a
+    geography with no sealed rows contributes nothing to the held-out estimate."""
+    coverage = split.geography_coverage(_located(), _folds())
+
+    assert coverage.loc[("athens", "plaka"), "sealed_rows"] == 1
+    assert coverage.loc[("athens", "kypseli"), "sealed_rows"] == 0
+    assert coverage.loc[("athens", "plaka"), "sealed_share"] == pytest.approx(1 / 3)
+
+
+def test_geography_coverage_is_sorted_by_size_so_the_worst_gap_is_first() -> None:
+    frame = _located()
+    frame.loc[len(frame)] = ["athens", "kypseli", 3]
+    coverage = split.geography_coverage(frame, pd.concat([_folds(), pd.Series([3])]))
+    assert coverage.index[0] == ("athens", "kypseli")
+
+
+def test_unrepresented_groups_flags_only_groups_in_uncovered_geographies() -> None:
+    flagged = split.unrepresented_groups(_located(), _folds(), _located()["query_group"])
+    assert flagged.loc[[0, 1]].tolist() == [False, False]  # plaka
+    assert flagged.loc[[2, 3]].tolist() == [True, True]  # kypseli
+
+
+def test_a_group_spanning_both_is_decided_by_majority() -> None:
+    """A pooled group can straddle covered and uncovered neighbourhoods; a rule is needed and
+    the majority is the one that keeps the two sets disjoint and interpretable."""
+    frame = pd.DataFrame(
+        {
+            "city": ["athens"] * 3,
+            "neighbourhood_cleansed": ["kypseli", "kypseli", "plaka"],
+            "query_group": [0, 0, 0],
+        }
+    )
+    folds = pd.Series([1, 2, split.SEALED_FOLD])
+    assert split.unrepresented_groups(frame, folds, frame["query_group"]).loc[0]
+
+
+def test_every_unrepresented_group_is_in_the_development_pool_by_construction() -> None:
+    """The property that makes the comparison possible: a group whose geography has no sealed rows
+    cannot itself be in the sealed fold, so cross-validation has already scored it out-of-fold."""
+    frame, folds = _located(), _folds()
+    flagged = split.unrepresented_groups(frame, folds, frame["query_group"])
+    sealed_groups = set(frame.loc[folds.eq(split.SEALED_FOLD), "query_group"])
+    assert not sealed_groups & set(flagged.index[flagged])

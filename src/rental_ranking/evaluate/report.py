@@ -268,3 +268,37 @@ def headline(table: pd.DataFrame, ranker: str, reference: str, slice_name: str =
             "built against a different reference)."
         )
     return sentence
+
+
+def unpaired_difference(
+    treatment: pd.Series,
+    reference: pd.Series,
+    iterations: int = 2_000,
+    confidence: float = 0.95,
+    seed: int = 0,
+) -> tuple[float, float, float]:
+    """Difference of two per-group metrics computed on **different** groups.
+
+    The counterpart to :func:`paired_difference`, and the right tool when the two sets share no
+    members — comparing one slice of groups against another rather than two rankers on the same
+    groups. Each set is resampled independently, because there is no pairing to exploit and
+    pretending otherwise would understate the interval.
+
+    Returns:
+        ``(mean_difference, low, high)``, all NaN if either side is empty.
+    """
+    left = treatment.dropna().to_numpy()
+    right = reference.dropna().to_numpy()
+    if left.size == 0 or right.size == 0:
+        return (np.nan, np.nan, np.nan)
+
+    rng = np.random.default_rng(seed)
+    means = left[rng.integers(0, left.size, size=(iterations, left.size))].mean(axis=1) - right[
+        rng.integers(0, right.size, size=(iterations, right.size))
+    ].mean(axis=1)
+    tail = (1 - confidence) / 2
+    return (
+        float(left.mean() - right.mean()),
+        float(np.quantile(means, tail)),
+        float(np.quantile(means, 1 - tail)),
+    )

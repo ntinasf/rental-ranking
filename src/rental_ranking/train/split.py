@@ -375,3 +375,65 @@ def dev_cv_splits(fold: pd.Series, sealed: int = SEALED_FOLD) -> list[tuple[pd.I
     return [
         (pool.index[pool.ne(held)], pool.index[pool.eq(held)]) for held in sorted(pool.unique())
     ]
+
+
+def geography_coverage(
+    listings: pd.DataFrame,
+    fold: pd.Series,
+    geo_column: str = "neighbourhood_cleansed",
+    sealed: int = SEALED_FOLD,
+) -> pd.DataFrame:
+    """How much of each geography the sealed fold holds — the split's representativeness report.
+
+    ``fold_balance`` answers what the split balanced on. This answers what it did **not**: the
+    strata are city and group-size band, so neighbourhood coverage is incidental, and because whole
+    connected components move together a large neighbourhood tends to land in one fold entire.
+
+    Args:
+        listings: The ranked population, carrying ``city`` and ``geo_column``.
+        fold: Fold id per row.
+        geo_column: Geography to report on.
+        sealed: The held-out fold.
+
+    Returns:
+        One row per ``(city, geography)``: ``rows``, ``sealed_rows`` and ``sealed_share``, sorted
+        by size. A geography with ``sealed_rows == 0`` contributes nothing to the held-out estimate.
+    """
+    require_columns(listings, ("city", geo_column), "ranked listings")
+    frame = listings.assign(_fold=fold.to_numpy())
+    coverage = frame.groupby(["city", geo_column], observed=True).agg(
+        rows=(geo_column, "size"),
+        sealed_rows=("_fold", lambda values: int((values == sealed).sum())),
+    )
+    coverage["sealed_share"] = coverage["sealed_rows"] / coverage["rows"]
+    return coverage.sort_values("rows", ascending=False)
+
+
+def unrepresented_groups(
+    listings: pd.DataFrame,
+    fold: pd.Series,
+    groups: pd.Series,
+    geo_column: str = "neighbourhood_cleansed",
+    sealed: int = SEALED_FOLD,
+) -> pd.Series:
+    """Query groups sitting mostly in geographies the sealed fold does not cover.
+
+    The instrument for testing whether the coverage gap **biases** the held-out estimate rather
+    than merely narrowing it. Every group flagged here is in the development pool by construction —
+    its geography has no sealed rows — so cross-validation has already scored it out-of-fold, and
+    the two sets can be compared inside one estimate rather than across two.
+
+    "Mostly" is a majority of the group's listings, because a pooled group can span both kinds.
+
+    Returns:
+        Boolean Series indexed by group id.
+    """
+    require_columns(listings, ("city", geo_column), "ranked listings")
+    coverage = geography_coverage(listings, fold, geo_column, sealed)
+    absent = set(coverage.index[coverage["sealed_rows"] == 0])
+
+    keys = list(zip(listings["city"], listings[geo_column], strict=True))
+    in_absent = pd.Series([key in absent for key in keys], index=listings.index)
+    return (
+        in_absent.groupby(groups.to_numpy(), observed=True).mean().gt(0.5).rename("unrepresented")
+    )

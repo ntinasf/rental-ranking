@@ -204,3 +204,39 @@ def test_headline_against_a_baseline_the_table_was_not_paired_on() -> None:
     fallback = report.headline(unpaired, "model", "baseline", "overall")
     assert "no paired interval" in fallback
     assert f"{table.loc[('overall', 'baseline'), 'ndcg@10']:.4f}" in fallback
+
+
+# --- unpaired differences ---------------------------------------------------------------------
+
+
+def test_unpaired_difference_compares_two_sets_that_share_no_groups() -> None:
+    """The counterpart to the paired bootstrap, for a slice-against-slice comparison where there
+    is no pairing to exploit."""
+    left = pd.Series([0.8, 0.9, 0.7], index=["a", "b", "c"])
+    right = pd.Series([0.5, 0.6, 0.4], index=["d", "e", "f"])
+    mean, low, high = report.unpaired_difference(left, right)
+
+    assert mean == pytest.approx(0.3, abs=1e-9)
+    assert low < mean < high
+
+
+def test_the_unpaired_interval_is_wider_than_the_paired_one_on_the_same_numbers() -> None:
+    """Pairing removes the between-group variance both rankers share; without it that variance
+    stays in the interval, and reporting the narrower one would overstate the evidence."""
+    left = pd.Series([0.80, 0.60, 0.90, 0.50])
+    right = pd.Series([0.75, 0.55, 0.85, 0.45])
+
+    _, p_low, p_high = report.paired_difference(left, right)
+    _, u_low, u_high = report.unpaired_difference(left, right)
+    assert (u_high - u_low) > (p_high - p_low)
+
+
+def test_an_empty_side_returns_nan_rather_than_a_number() -> None:
+    mean, low, high = report.unpaired_difference(pd.Series([0.5]), pd.Series(dtype="float64"))
+    assert np.isnan(mean) and np.isnan(low) and np.isnan(high)
+
+
+def test_degenerate_groups_are_dropped_from_both_sides() -> None:
+    left = pd.Series([0.8, np.nan, 0.6])
+    right = pd.Series([0.5, np.nan])
+    assert report.unpaired_difference(left, right)[0] == pytest.approx(0.2, abs=1e-9)

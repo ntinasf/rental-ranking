@@ -607,14 +607,13 @@ def coverage() -> dict:
         return json.loads((bundle / BUNDLE_COVERAGE).read_text())
 
     table = ranked_table()
-    per = table.groupby(["city", "neighbourhood_cleansed"], observed=True).agg(
-        listings=(ID_COLUMN, "size"),
-        sealed=("fold", lambda f: int((f == split.SEALED_FOLD).sum())),
-    )
-    hidden = per[per["sealed"] == 0]
+    # split.geography_coverage owns this computation; recomputing it here would let the console's
+    # note and the split's own representativeness report drift apart.
+    per = split.geography_coverage(table, table["fold"])
+    hidden = per[per["sealed_rows"] == 0]
     biggest = (
         hidden.reset_index()
-        .sort_values("listings", ascending=False)
+        .sort_values("rows", ascending=False)
         .drop_duplicates("city")
         .set_index("city")["neighbourhood_cleansed"]
     )
@@ -622,12 +621,12 @@ def coverage() -> dict:
         "neighbourhoods": int(len(per)),
         "searchable": int(len(per) - len(hidden)),
         "hidden": int(len(hidden)),
-        "hidden_listings": int(hidden["listings"].sum()),
-        "hidden_share": float(hidden["listings"].sum() / len(table)),
+        "hidden_listings": int(hidden["rows"].sum()),
+        "hidden_share": float(hidden["rows"].sum() / len(table)),
         "biggest_hidden": {
             city: {
                 "neighbourhood": name,
-                "listings": int(hidden.loc[(city, name), "listings"]),
+                "listings": int(hidden.loc[(city, name), "rows"]),
             }
             for city, name in biggest.items()
         },
