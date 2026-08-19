@@ -39,6 +39,31 @@ second time with its review history stripped and everything else held, and the r
 is reported. In Thessaloniki it falls 1 → 15 of 23; in Crete it does not move. That contrast is
 the honest picture of what the model leans on, and it agrees with what notebook 04 measured.
 
+## The console
+
+`python -m rental_ranking.cloud.console` serves a local page: pick a query group, pick a listing,
+change its fields — real dropdowns for the five categoricals, boxes for the numerics — and re-rank
+the **real candidate set** with the **held-out grades** shown beside the result. It reports where
+the edited listing moved and what the metric did.
+
+```bash
+uv run python -m rental_ranking.cloud.console --local   # no endpoint, no cost
+uv run python -m rental_ranking.cloud.console           # proxies to AML_ENDPOINT_URI
+```
+
+It is a **proxy, not a nicety**: a browser cannot call a managed endpoint directly (no CORS
+headers on the preflight), and putting the auth key in a page would hand a live credential to
+anything the browser loads. The key stays in the Python process. Standard library only.
+
+Two constraints are deliberate. It **edits a real listing rather than composing one** — an
+invented row has no grade, so its ranking cannot be checked, and the most such a demo can show is
+that the service responds. And `city`/`room_type` are **shown but not editable**: they are the
+query-group key, constant inside a group, so changing one builds a candidate the search never
+contained.
+
+Re-ranking without touching anything is a true no-op — an untouched box submits the value at full
+precision rather than the rounded one it displays — so any movement is attributable to the edit.
+
 ## Reproducing it
 
 Everything below runs against **the local scoring script**, no Azure account and no cost:
