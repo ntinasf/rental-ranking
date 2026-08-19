@@ -338,3 +338,42 @@ The endpoint itself is free until a deployment attaches an instance.
 - [ ] **`az acr delete`** — this is the $5/month one
 - [x] `az cognitiveservices account delete/purge --name nf-rental-language` — **done 2026-08-18**
 - [ ] `az group delete --name nf-rental-ranking` when the project wraps — removes everything
+
+### Step 8, second pass (2026-08-19) — a demonstration that shows the model, not the endpoint
+
+The first deployment proved a service existed and answered. It did not show that what it served
+ranks: `{"id","score","rank"}` with no truth beside it reads the same whether the model is good
+or shuffled. `src/rental_ranking/cloud/demo.py` is the missing half — it builds requests from
+sealed-fold listings, joins the response back to the held-out grades on this machine, and scores
+the endpoint against both frozen baselines and a random floor on the same candidate set.
+
+```bash
+# no Azure account, no cost — same init()/run() the container calls
+uv run python -m rental_ranking.cloud.demo --query thessaloniki --local --counterfactual
+
+# against the live endpoint (AML_ENDPOINT_URI / AML_ENDPOINT_KEY in .env)
+uv run python -m rental_ranking.cloud.demo --query athens --counterfactual
+uv run python -m rental_ranking.cloud.demo --query thessaloniki --variant cold-start
+uv run python -m rental_ranking.cloud.demo --query thessaloniki --variant unknown-level
+uv run python -m rental_ranking.cloud.demo --capture      # writes docs/endpoint_demo/
+```
+
+Reference numbers, measured locally on the sealed fold before redeploying — the cloud must
+reproduce them exactly, as the training job did:
+
+| query | n | endpoint | reviews | price+rating | random |
+|---|---|---|---|---|---|
+| athens (group 79) | 29 | 0.5976 | 0.4063 | 0.4384 | 0.3852 |
+| crete (group 305) | 25 | 0.7962 | 0.7494 | 0.7550 | 0.5587 |
+| thessaloniki (group 24) | 23 | 0.8095 | 0.6081 | 0.4128 | 0.5743 |
+
+Counterfactual, top listing with review history stripped: Thessaloniki **1 → 15** of 23,
+Crete **1 → 1**. Cold-start variant (whole group blanked): 0.7230, still above its 0.5743 floor.
+
+**One bug found, and it was found by the demo rather than by the smoke test.** The cold-start
+request crashed the scoring path: a feature column present and `null` for every listing arrives
+from `json.loads` as `object`, and LightGBM rejects the frame with `pandas dtypes must be int,
+float or bool` — an unhandled exception, so a 500 with no message. An *absent* column was always
+fine, because `reindex` gives it `float64` NaN, which is why the first pass's "sparse" request
+passed. `restore_dtypes` now coerces, and names the column when a value genuinely is not a
+number. Fix and three regression tests in `train/lambdamart.py` and `tests/test_demo.py`.

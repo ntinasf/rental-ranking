@@ -309,8 +309,17 @@ def restore_dtypes(frame: pd.DataFrame, metadata: dict) -> pd.DataFrame:
     LightGBM routes down a learned branch. A caller with no review scores for a brand-new
     listing is describing the world accurately, not making a mistake.
 
+    3. **Coerces object-dtype numeric columns to float.** Added 2026-08-19 after the cold-start
+       demonstration request crashed the scoring container. ``reindex`` gives an *absent* column
+       ``float64`` NaN, but a column that is **present and null for every listing** comes out of
+       ``json.loads`` as ``object``, and LightGBM rejects the frame with ``pandas dtypes must be
+       int, float or bool`` — an unhandled exception, so a 500 rather than a message. The two
+       cases are the same request semantically; only the serialiser differs. A value that is
+       genuinely not a number now raises here instead, naming the column.
+
     Raises:
-        ValueError: If a categorical column carries a level absent from training.
+        ValueError: If a categorical column carries a level absent from training, or a numeric
+            column carries something that is not a number.
     """
     rebuilt = frame.reindex(columns=metadata["features"])
     for column, levels in metadata["categories"].items():
@@ -323,6 +332,20 @@ def restore_dtypes(frame: pd.DataFrame, metadata: dict) -> pd.DataFrame:
                 "as missing rather than reject it"
             )
         rebuilt[column] = pd.Categorical(values, categories=levels)
+
+    for column in metadata["features"]:
+        if column in metadata["categories"] or rebuilt[column].dtype != object:
+            continue
+        numeric = pd.to_numeric(rebuilt[column], errors="coerce")
+        bad = rebuilt[column].notna() & numeric.isna()
+        if bad.any():
+            raise ValueError(
+                f"column {column!r} carries {int(bad.sum())} non-numeric value(s), e.g. "
+                f"{rebuilt.loc[bad, column].iloc[0]!r}. Numeric features must arrive as numbers "
+                "or null"
+            )
+        rebuilt[column] = numeric.astype("float64")
+
     return design_matrix(rebuilt, metadata["features"])
 
 

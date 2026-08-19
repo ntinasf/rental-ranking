@@ -1,0 +1,3 @@
+{
+ "error": "column 'room_type' carries level(s) ['Houseboat'] the model never saw during training. Known levels: ['Entire home/apt', 'Hotel room', 'Private room', 'Shared room']. Scoring them would silently treat the value as missing rather than reject it"
+}
