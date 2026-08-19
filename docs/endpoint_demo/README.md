@@ -51,29 +51,19 @@ uv run python -m rental_ranking.cloud.console           # proxies to AML_ENDPOIN
 **Search** picks a city, a neighbourhood, a room type and a party size. That is not a skin over
 the demo — it is *literally the query-group key*. `features/groups.py` builds the group from
 `city × neighbourhood_cleansed × room_type × capacity_tier` precisely because that is "what a
-guest would have typed", so choosing those four selects the candidate set the model ranks. **516
-searches resolve across all 393 query groups and all 75 neighbourhoods.**
+guest would have typed", so choosing those four selects the candidate set the model ranks.
 
-**Only 74 of those groups are held out, and the console says which you are looking at.** Restricting
-the search to the sealed fold was the first design and it was quietly misleading: **17 of 75
-neighbourhoods have no sealed listing at all — 34.8 % of the population, including the largest
-neighbourhood in every city.** Central Thessaloniki (4,162 listings, 89 % of that city) is one of
-them. The cause is the grouped split working correctly: whole connected components move together,
-and a big neighbourhood is a big component. A picker missing half the map is not one anyone can
-trust.
+**The picker offers held-out listings only**, so every score it shows is out-of-sample: 112
+searches across the 74 sealed groups. The cost is stated on the page rather than hidden — **17 of
+75 neighbourhoods are unsearchable, 34.8 % of listings**, including the largest in every city
+(central Thessaloniki, 4,162 listings, 89 % of that city). The grouped split moves whole connected
+components and a large neighbourhood *is* a large component, so it lands in training entire.
+Offering those groups anyway would mean scoring data the model fitted, where the ordering is a
+memory rather than a prediction.
 
-So the search covers everything and every result is stamped `HELD OUT` or `TRAINED ON`. For a
-trained-on group **no metric is computed at all** — it is absent from the payload, not hidden in
-the page, so there is nothing to leak or crop. Rank *movement* still shows, because "it fell from
-1 to 15 when I stripped its reviews" is a statement about behaviour, not an estimate of quality.
-
-Search central Thessaloniki and look at the top twelve: **all grade 4**. That is what fitting your
-own training data looks like, and it is the clearest argument in the whole console for why the
-number is suppressed.
-
-**41 % of searches land in a pooled group** — fewer than five listings shared the exact key, so the
-cascade re-keyed them at a coarser rung. The banner says so, names how many neighbourhoods the
-group really spans, and highlights the listings that matched your literal search.
+**41 % of searches land in a pooled group** — fewer than five sealed listings shared the exact key,
+so the cascade re-keyed them at a coarser rung. The banner says so, names how many neighbourhoods
+the group really spans, and highlights the listings that matched your literal search.
 
 **Edit** any listing in the result: dropdowns carrying the real training levels for the five
 categoricals, boxes for the numerics, one-click presets. Re-rank and the table redraws with the
@@ -104,6 +94,28 @@ uv run python -m rental_ranking.cloud.demo --capture --local     # rewrites RESU
 
 `--local` calls the same `init()`/`run()` the container calls, on the same bundle. It is the
 reference the cloud responses were diffed against.
+
+## Running it as a container
+
+```bash
+uv run python -m rental_ranking.cloud.demo --bundle data/train/demo_bundle
+docker build -f docker/Dockerfile -t rental-ranker-console .
+docker run --rm -p 127.0.0.1:8000:8000 rental-ranker-console
+```
+
+857 MB, no Azure dependency, no credential, no network. It carries the booster, the sealed fold
+already resolved, and a precomputed coverage report — so it needs neither the processed data layer
+nor a 25-second re-run of the fold assignment at every start.
+
+**This is not the scoring image.** Azure ML builds its own from `pipelines/score_environment.yml`,
+which carries `azureml-inference-server-http` and nothing else. Two images because they answer to
+different callers. Versions are pinned to the local environment that produced every number in the
+write-up: the container reproduces group 24 at **0.809461900603779**, digit for digit.
+
+Building it needs `data/train/serving_bundle/` and `data/train/demo_bundle/`, both gitignored
+derivatives — so the image is reproducible from this repo plus the raw Inside Airbnb snapshots, not
+from a bare clone. The image redistributes Inside Airbnb data under CC BY 4.0 and carries the
+attribution in the page footer.
 
 ## Redeploying, if the demonstration has to be run live again
 

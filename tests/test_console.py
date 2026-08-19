@@ -170,35 +170,11 @@ def test_movement_reports_both_the_rank_and_the_metric() -> None:
     assert moved["ndcg_after"] < moved["ndcg_before"]
 
 
-# --- provenance -------------------------------------------------------------------------------
-
-
-def test_a_group_the_model_trained_on_carries_no_metric_at_all() -> None:
-    """Not hidden in the page — absent from the payload, so there is nothing to leak or crop."""
-    view = console.ranking_view(_resp(["a", "b", "c"]), _truth(), "a", sealed=False)
-    assert view["metrics"] is None
-    assert view["sealed"] is False
-
-
-def test_movement_survives_in_sample_but_the_metric_does_not() -> None:
-    """ "It fell from 1 to 3 when I stripped its reviews" is behaviour, not an estimate."""
-    before, after = _resp(["a", "b", "c"]), _resp(["c", "b", "a"])
-    moved = console.ranking_view(after, _truth(), "a", before=before, sealed=False)["moved"]
-
-    assert (moved["rank_before"], moved["rank_after"]) == (1, 3)
-    assert "ndcg_before" not in moved and "ndcg_after" not in moved
-
-
-def test_a_held_out_group_still_reports_everything() -> None:
-    view = console.ranking_view(_resp(["a", "b", "c"]), _truth(), "a", sealed=True)
-    assert view["sealed"] is True
-    assert view["metrics"]["endpoint"] == pytest.approx(1.0)
-
-
 # --- the display cap ----------------------------------------------------------------------------
 
 
 def test_the_table_is_capped_but_reports_the_true_size() -> None:
+    """The largest sealed group is 2,042 listings; the page draws a hundred."""
     view = console.ranking_view(_resp(["a", "b", "c"]), _truth(), "a", limit=2)
     assert len(view["rows"]) == 2
     assert view["n_rows"] == 3

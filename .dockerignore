@@ -1,0 +1,10 @@
+# Everything by default; the Dockerfile opts in to the four things the image needs. A blanket
+# ignore is the safer direction for a repo whose data/ holds a 327 MB reviews parquet and whose
+# .env holds live credentials.
+*
+!src/
+!README.md
+!data/train/serving_bundle/
+!data/train/demo_bundle/
+**/__pycache__/
+**/*.pyc

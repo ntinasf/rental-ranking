@@ -397,6 +397,23 @@ def invoke(uri: str, key: str, payload: Mapping[str, Any], timeout: int = 60) ->
 DESCRIPTION_COLUMNS: tuple[str, ...] = ("name", "neighbourhood_cleansed")
 
 
+#: Set to a directory to run from a **pre-built bundle** instead of the project's data layers —
+#: the container path. The bundle holds the sealed fold and a precomputed coverage report, so an
+#: image needs neither the processed layer nor a 25-second re-run of the fold assignment at every
+#: start. Built by ``python -m rental_ranking.cloud.demo --bundle <dir>``.
+BUNDLE_VAR = "RENTAL_RANKING_DEMO_BUNDLE"
+
+#: What a bundle contains.
+BUNDLE_TABLE = "demo_table.parquet"
+BUNDLE_COVERAGE = "coverage.json"
+
+
+def bundle_dir() -> Path | None:
+    """The demo bundle directory, if this process was pointed at one."""
+    value = os.environ.get(BUNDLE_VAR)
+    return Path(value) if value else None
+
+
 @lru_cache(maxsize=1)
 def ranked_table() -> pd.DataFrame:
     """The whole ranked population with its fold, its search key and its readable columns.
@@ -419,45 +436,48 @@ def ranked_table() -> pd.DataFrame:
     return table.assign(capacity_tier=groups.capacity_tier(table).to_numpy())
 
 
+@lru_cache(maxsize=1)
 def sealed_table() -> pd.DataFrame:
-    """Just the sealed fold — the only listings whose grades the served model never saw."""
+    """Just the sealed fold — the only listings whose grades the served model never saw.
+
+    Read straight from the bundle when one is configured. The bundle is the sealed fold *already
+    resolved*, which is the whole point: the fold assignment is connected components over 44,684
+    rows and a container should not repeat it on every start to reach an answer that cannot
+    change.
+    """
+    bundle = bundle_dir()
+    if bundle is not None:
+        return pd.read_parquet(bundle / BUNDLE_TABLE)
     table = ranked_table()
     return table[table["fold"] == split.SEALED_FOLD]
 
 
-def is_sealed(listings: pd.DataFrame) -> bool:
-    """Whether every listing here was held out of training.
+def group_listings(query_group: int) -> pd.DataFrame:
+    """One query group's candidate set, sealed fold only.
 
-    **Binary on purpose.** Cross-validation gives each development fold an out-of-fold prediction
-    from a model that did not see it, but the *served* model was refit on all four development
-    folds — so for the thing behind the endpoint, a listing is either in fold
-    ``split.SEALED_FOLD`` or it is training data. There is no third category.
-    """
-    return bool((listings["fold"] == split.SEALED_FOLD).all())
-
-
-def group_listings(query_group: int, sealed_only: bool = True) -> pd.DataFrame:
-    """One query group's candidate set.
-
-    Args:
-        query_group: The group id.
-        sealed_only: Refuse a group the served model trained on. True for anything that reports a
-            number — the CLI, ``--capture`` — and False for the console, which searches the whole
-            population and labels what it found instead.
+    **Reads the sealed table, not the ranked one.** Everything that reports a number comes through
+    here, so this is the single point where a trained-on group is refused — and routing it through
+    ``sealed_table`` is also what lets it work from a bundle, where the rest of the population is
+    not present at all. Found by the container: the bundle path was wired into ``sealed_table``
+    and ``coverage`` while this function still reached past both for the feature table.
 
     Raises:
-        KeyError: If the group does not exist, or ``sealed_only`` and it is training data.
+        KeyError: If the group is not in the sealed fold.
     """
-    table = ranked_table()
-    listings = table[table["query_group"] == query_group]
-    if listings.empty:
-        raise KeyError(f"query group {query_group} is not in the ranked population")
-    if sealed_only and not is_sealed(listings):
-        raise KeyError(
-            f"query group {query_group} is not in the sealed fold. Only fold "
-            f"{split.SEALED_FOLD} is out-of-sample; every other group was trained on"
-        )
-    return listings
+    sealed = sealed_table()
+    listings = sealed[sealed["query_group"] == query_group]
+    if not listings.empty:
+        return listings
+
+    detail = "it either does not exist or the served model trained on it"
+    if bundle_dir() is None:
+        table = ranked_table()
+        exists = bool((table["query_group"] == query_group).any())
+        detail = "the served model trained on it" if exists else "it does not exist"
+    raise KeyError(
+        f"query group {query_group} is not in the sealed fold ({detail}). Only fold "
+        f"{split.SEALED_FOLD} is out-of-sample"
+    )
 
 
 def _sealed_listings(name: str) -> tuple[pd.DataFrame, dict]:
@@ -479,19 +499,15 @@ SEARCH_KEY: tuple[str, ...] = ("city", "neighbourhood_cleansed", "room_type", "c
 
 
 def search_index() -> pd.DataFrame:
-    """Every search a guest could run, and the query group it lands in.
+    """Every search that can be answered honestly, and the query group it lands in.
 
-    One row per ``(city, neighbourhood, room type, capacity tier)`` in the **whole** ranked
-    population, carrying the group those listings belong to, how wide that group turned out to be,
-    and whether it is out-of-sample.
+    One row per ``(city, neighbourhood, room type, capacity tier)`` **in the sealed fold**,
+    carrying the group those listings belong to and how wide that group turned out to be.
 
-    **It covers everything, not just the sealed fold, and marks the difference.** Restricting the
-    search to fold 0 looked honest and was misleading in practice: 17 of 75 neighbourhoods have no
-    sealed listing at all — 34.8 % of the population, including the largest neighbourhood in every
-    city — because the grouped split moves whole connected components and a big neighbourhood is a
-    big component. A picker missing central Thessaloniki is not a picker anyone can trust. So the
-    search offers all of it and ``sealed`` says which results carry a metric; see
-    :func:`is_sealed`.
+    **Sealed only, and the gap is stated rather than filled.** A demonstration that offered the
+    whole population would have to show results for groups the model trained on, where the
+    ordering is a memory rather than a prediction. Those are not worth looking at, so the picker
+    does not offer them; :func:`coverage` reports what that costs and the console prints it.
 
     **The width columns are observed, not claimed.** ``neighbourhoods`` and ``tiers`` count what
     the resolved group actually contains. A group with 12 neighbourhoods in it is one whose
@@ -499,19 +515,17 @@ def search_index() -> pd.DataFrame:
     (``groups.GROUP_CASCADE``) — so a guest who picks that neighbourhood is really competing
     city-wide, and the console says so rather than implying the neighbourhood narrowed anything.
     """
-    table = ranked_table()
-    width = table.groupby("query_group", observed=True).agg(
+    sealed = sealed_table()
+    width = sealed.groupby("query_group", observed=True).agg(
         group_size=(ID_COLUMN, "size"),
         neighbourhoods=("neighbourhood_cleansed", "nunique"),
         tiers=("capacity_tier", "nunique"),
-        sealed_rows=("fold", lambda f: int((f == split.SEALED_FOLD).sum())),
     )
-    width["sealed"] = width["sealed_rows"] == width["group_size"]
     index = (
-        table.groupby([*SEARCH_KEY, "query_group"], observed=True)
+        sealed.groupby([*SEARCH_KEY, "query_group"], observed=True)
         .agg(matching=(ID_COLUMN, "size"))
         .reset_index()
-        .merge(width.drop(columns="sealed_rows"), on="query_group", how="left")
+        .merge(width, on="query_group", how="left")
     )
     return index.sort_values([*SEARCH_KEY]).reset_index(drop=True)
 
@@ -557,6 +571,50 @@ def group_key(listings: pd.DataFrame) -> dict:
     }
 
 
+def coverage() -> dict:
+    """What the sealed-only picker cannot offer, and why.
+
+    The search is restricted to the held-out fold so every result carries an honest metric. The
+    cost is real and worth printing rather than hiding: the grouped split moves whole connected
+    components, a large neighbourhood *is* a large component, and so the largest neighbourhood in
+    each city tends to land in training entirely. Central Thessaloniki — 89 % of that city — is
+    the clearest case.
+
+    Returns:
+        Counts and the worst example per city, ready to render.
+    """
+    bundle = bundle_dir()
+    if bundle is not None:
+        return json.loads((bundle / BUNDLE_COVERAGE).read_text())
+
+    table = ranked_table()
+    per = table.groupby(["city", "neighbourhood_cleansed"], observed=True).agg(
+        listings=(ID_COLUMN, "size"),
+        sealed=("fold", lambda f: int((f == split.SEALED_FOLD).sum())),
+    )
+    hidden = per[per["sealed"] == 0]
+    biggest = (
+        hidden.reset_index()
+        .sort_values("listings", ascending=False)
+        .drop_duplicates("city")
+        .set_index("city")["neighbourhood_cleansed"]
+    )
+    return {
+        "neighbourhoods": int(len(per)),
+        "searchable": int(len(per) - len(hidden)),
+        "hidden": int(len(hidden)),
+        "hidden_listings": int(hidden["listings"].sum()),
+        "hidden_share": float(hidden["listings"].sum() / len(table)),
+        "biggest_hidden": {
+            city: {
+                "neighbourhood": name,
+                "listings": int(hidden.loc[(city, name), "listings"]),
+            }
+            for city, name in biggest.items()
+        },
+    }
+
+
 def guests_to_tier(guests: int) -> str:
     """The capacity tier a party size falls in, using the bounds the groups were built from.
 
@@ -580,14 +638,13 @@ def resolve_search(city: str, neighbourhood: str, room_type: str, guests: int) -
     """Turn one search into the query group that answers it.
 
     Returns:
-        ``{"query_group", "matching", "group_size", "neighbourhoods", "tiers", "pooled",
-        "sealed"}``. ``pooled`` is True when the resolved group spans more than one
-        neighbourhood, meaning the chosen neighbourhood did not have five listings of its own and
-        the competition is wider than the search implies. ``sealed`` is False when the served
-        model trained on this group, in which case no metric may be reported from it.
+        ``{"query_group", "matching", "group_size", "neighbourhoods", "tiers", "pooled"}``.
+        ``pooled`` is True when the resolved group spans more than one neighbourhood, meaning the
+        chosen neighbourhood did not have five sealed listings of its own and the competition is
+        wider than the search implies.
 
     Raises:
-        KeyError: If no listing matches the search at all.
+        KeyError: If no sealed listing matches.
     """
     index = search_index()
     tier = guests_to_tier(guests)
@@ -599,8 +656,8 @@ def resolve_search(city: str, neighbourhood: str, room_type: str, guests: int) -
     ]
     if hit.empty:
         raise KeyError(
-            f"no listing matches {city} / {neighbourhood} / {room_type} / {guests} guests "
-            f"(tier {tier})"
+            f"no held-out listing matches {city} / {neighbourhood} / {room_type} / {guests} "
+            f"guests (tier {tier})"
         )
     row = hit.iloc[0]
     return {
@@ -611,7 +668,6 @@ def resolve_search(city: str, neighbourhood: str, room_type: str, guests: int) -
         "tiers": int(row["tiers"]),
         "capacity_tier": tier,
         "pooled": bool(row["neighbourhoods"] > 1),
-        "sealed": bool(row["sealed"]),
     }
 
 
@@ -799,6 +855,11 @@ def main(argv: Sequence[str] | None = None) -> None:
         help="also send the top listing with its review history stripped, and report the move",
     )
     parser.add_argument(
+        "--bundle",
+        type=Path,
+        help="write the container bundle here (the sealed fold plus a coverage report) and exit",
+    )
+    parser.add_argument(
         "--capture",
         action="store_true",
         help="run every query and variant, write the responses and RESULTS.md to "
@@ -808,6 +869,18 @@ def main(argv: Sequence[str] | None = None) -> None:
     args = parser.parse_args(argv)
 
     features = _serving_metadata()["features"]
+
+    if args.bundle is not None:
+        args.bundle.mkdir(parents=True, exist_ok=True)
+        table = sealed_table()
+        table.to_parquet(args.bundle / BUNDLE_TABLE, index=False)
+        (args.bundle / BUNDLE_COVERAGE).write_text(json.dumps(coverage(), indent=1))
+        print(
+            f"{args.bundle / BUNDLE_TABLE}  {len(table)} listings, "
+            f"{table['query_group'].nunique()} groups\n"
+            f"{args.bundle / BUNDLE_COVERAGE}"
+        )
+        return
 
     if args.write_requests:
         destination = paths.ENDPOINT_DEMO_DIR

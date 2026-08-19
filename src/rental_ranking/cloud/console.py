@@ -215,20 +215,12 @@ def ranking_view(
     edited: str,
     before: Mapping[str, Any] | None = None,
     k: int = demo.DEFAULT_K,
-    sealed: bool = True,
     limit: int = DISPLAY_LIMIT,
 ) -> dict:
     """The response, the truth beside it, and the movement — everything the page draws.
 
-    **No metric is computed for a group the model trained on.** The console searches the whole
-    ranked population, because restricting it to the sealed fold hid 17 of 75 neighbourhoods
-    including the largest in every city. The cost of that reach is that most searches land
-    in-sample, where an NDCG would be a fitted number wearing the costume of a result — and a
-    cropped screenshot of one would be indefensible. So when ``sealed`` is False the metrics are
-    not suppressed in the page, they are **never put in the payload**: there is nothing to leak.
-
-    Rank movement survives, because "this listing fell 1 -> 15 when I removed its reviews" is a
-    statement about the model's behaviour, not an estimate of its quality.
+    Every group reaching here is from the sealed fold — :func:`demo.group_listings` refuses the
+    rest — so every metric in the payload is out-of-sample.
 
     Args:
         response: The ranking under the current edits.
@@ -236,44 +228,35 @@ def ranking_view(
         edited: The listing being edited, so the page can mark its row.
         before: The unedited ranking, if there is one, to report the movement against.
         k: Metric cut-off.
-        sealed: Whether this group was held out of training. False suppresses every metric.
         limit: Rows to return. The edited listing is always among them.
 
     Returns:
-        A JSON-serialisable dict: ``rows``, ``n_rows``, ``edited``, ``k``, ``sealed``, ``moved``,
-        and ``metrics`` — the last two carrying NDCG only when ``sealed``.
+        A JSON-serialisable dict: ``rows``, ``n_rows``, ``edited``, ``k``, ``metrics`` and
+        ``moved``.
     """
     table = demo.explain(response, truth, k=k).reset_index()
     shown = table.head(limit)
     if edited not in set(shown["id"]):
         shown = pd.concat([shown, table[table["id"] == edited]])
 
-    rows = json.loads(shown.to_json(orient="records"))
+    quality = demo.query_quality(response, truth, k=k)
     moved = None
     if before is not None:
+        prior = demo.query_quality(before, truth, k=k)
         moved = {
             "rank_before": demo.rank_of(before, edited),
             "rank_after": demo.rank_of(response, edited),
+            "ndcg_before": float(prior["endpoint"]),
+            "ndcg_after": float(quality["endpoint"]),
         }
-    view = {
-        "rows": rows,
+    return {
+        "rows": json.loads(shown.to_json(orient="records")),
         "n_rows": len(table),
         "edited": edited,
         "k": k,
-        "sealed": sealed,
+        "metrics": {name: float(value) for name, value in quality.items()},
         "moved": moved,
-        "metrics": None,
     }
-    if not sealed:
-        return view
-
-    quality = demo.query_quality(response, truth, k=k)
-    view["metrics"] = {name: float(value) for name, value in quality.items()}
-    if moved is not None:
-        prior = demo.query_quality(before, truth, k=k)
-        moved["ndcg_before"] = float(prior["endpoint"])
-        moved["ndcg_after"] = float(quality["endpoint"])
-    return view
 
 
 # --- the page ---------------------------------------------------------------------------------
@@ -323,12 +306,8 @@ main { padding:16px 22px 40px; overflow-x:auto; }
 .banner { border:1px solid var(--line); background:var(--panel); border-radius:6px;
   padding:9px 12px; margin-bottom:14px; font-size:12.5px; }
 .banner.pooled { border-color:var(--warn); }
-.insample { border:1px solid var(--warn); border-radius:6px; padding:10px 13px; margin-bottom:12px;
-  background:color-mix(in srgb, var(--warn) 9%, transparent); font-size:12.5px; }
-.insample b { color:var(--warn); }
-.tag { display:inline-block; border:1px solid currentColor; border-radius:4px; padding:0 5px;
-  font-size:10px; letter-spacing:.06em; text-transform:uppercase; vertical-align:2px; }
-.tag.sealed { color:var(--up); } .tag.trained { color:var(--warn); }
+.coverage { color:var(--dim); font-size:11.5px; margin-top:9px; max-width:96ch; }
+.coverage b { color:var(--ink); font-weight:600; }
 .banner small { display:block; color:var(--dim); margin-top:3px; }
 .banner b { font-weight:600; }
 
@@ -366,6 +345,7 @@ tr.cut td { border-bottom:2px solid var(--accent); }
 .move { font-size:13px; margin:0 0 12px; min-height:20px; }
 .up { color:var(--up); } .down { color:var(--down); }
 .note { color:var(--dim); font-size:12px; max-width:74ch; margin-top:16px; }
+.note a { color:var(--accent); }
 .err { color:var(--down); font:12px ui-monospace,monospace; white-space:pre-wrap; margin-top:8px; }
 </style>
 
@@ -379,6 +359,7 @@ tr.cut td { border-bottom:2px solid var(--accent); }
     <button id="go">search</button>
   </div>
   <div class="quick" id="quick">worked examples:</div>
+  <p class="coverage" id="coverage"></p>
 </header>
 
 <div class="wrap">
@@ -401,6 +382,10 @@ tr.cut td { border-bottom:2px solid var(--accent); }
   <p class="move" id="move"></p>
   <div id="table"></div>
   <p class="note" id="note"></p>
+  <p class="note">Listing data from <a href="https://insideairbnb.com/">Inside Airbnb</a>, licensed
+    <a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>. Listing ids are hashed and
+    host identifiers are stripped before anything leaves the data layer. The occupancy target is a
+    <b>demand proxy</b> built from forward-looking calendar availability — it is not booking history.</p>
 </main>
 </div>
 
@@ -461,14 +446,11 @@ function drawBanner() {
   const k = STATE.key;
   const where = k.neighbourhood || `${k.neighbourhoods} neighbourhoods`;
   const tier = k.capacity_tier ? `${k.capacity_tier} guests` : `${k.tiers} capacity tiers`;
-  const tag = STATE.sealed
-    ? `<span class="tag sealed">held out</span>`
-    : `<span class="tag trained">trained on</span>`;
-  const head = (s
+  const head = s
     ? `<b>${s.city} · ${s.neighbourhood} · ${s.room_type} · ${s.guests} guests</b> ` +
-      `&rarr; query group <b>${STATE.query_group}</b>, ${STATE.n} listings `
+      `&rarr; query group <b>${STATE.query_group}</b>, ${STATE.n} listings`
     : `<b>${k.city} · ${where} · ${k.room_type} · ${tier}</b> ` +
-      `&rarr; query group <b>${STATE.query_group}</b>, ${STATE.n} listings `) + tag;
+      `&rarr; query group <b>${STATE.query_group}</b>, ${STATE.n} listings`;
   const tail = !s ? "the query-group key is city × neighbourhood × room type × capacity tier &mdash; " +
       "the same four things a guest picks, which is why searching for them selects a candidate set"
     : s.pooled
@@ -549,26 +531,17 @@ const COLS = [["rank", 0], ["id", null], ["name", null], ["score", 4], ["grade",
 
 function draw(view) {
   const m = view.metrics;
-  // No metric exists for a group the model trained on -- the server does not send one, so there
-  // is nothing here to accidentally screenshot.
-  $("cards").innerHTML = m ? [
+  $("cards").innerHTML = [
     ["endpoint", m.endpoint], ["reviews", m.baseline_reviews],
     ["price+rating", m.baseline_price_rating], ["random floor", m.random],
-  ].map(([n, v]) => `<div class="card"><b>${v.toFixed(4)}</b><small>${n}</small></div>`).join("")
-   : `<div class="insample"><b>No score is shown for this search.</b> The served model was refit ` +
-     `on all four development folds, so it fitted these grades — an NDCG here would measure how ` +
-     `well it memorised, not how well it ranks. The ordering below is still worth reading; the ` +
-     `number would not be. Search a <span class="tag sealed">held out</span> group, or use a ` +
-     `worked example, to get one.</div>`;
+  ].map(([n, v]) => `<div class="card"><b>${v.toFixed(4)}</b><small>${n}</small></div>`).join("");
 
   const mv = view.moved;
-  const delta = mv && mv.ndcg_before !== undefined
-    ? ` &nbsp;·&nbsp; NDCG@${view.k} ${mv.ndcg_before.toFixed(4)} → ${mv.ndcg_after.toFixed(4)}` : "";
   $("move").innerHTML = !mv ? "" :
     `<code>${view.edited}</code> &nbsp; rank <b>${mv.rank_before} → ${mv.rank_after}</b> of ${view.n_rows} ` +
     `<span class="${mv.rank_after < mv.rank_before ? "up" : mv.rank_after > mv.rank_before ? "down" : ""}">` +
     `${mv.rank_after === mv.rank_before ? "(unmoved)" : mv.rank_after < mv.rank_before ? "▲" : "▼"}</span>` +
-    delta;
+    ` &nbsp;·&nbsp; NDCG@${view.k} ${mv.ndcg_before.toFixed(4)} → ${mv.ndcg_after.toFixed(4)}`;
 
   $("table").innerHTML =
     `<table><thead><tr>` + COLS.map(([c]) =>
@@ -589,13 +562,9 @@ function draw(view) {
       `editing, if it fell below). ` : "";
   $("note").innerHTML = truncated +
     `Grades are the truth and are never sent to the scorer. The rule under the cut line is ` +
-    `NDCG@${view.k}: only the top ${view.k} count. ` + (view.sealed
-      ? `A single query is an anecdote &mdash; the estimate is the sealed fold, 0.7530 ` +
-        `[0.7148, 0.7903] over 72 groups, against 0.6429 for price+rating and a 0.5519 floor.`
-      : `Only 74 of the 393 query groups are held out, and 17 of 75 neighbourhoods have no held-out ` +
-        `listing at all &mdash; the grouped split moves whole connected components, and a large ` +
-        `neighbourhood is a large component. The search covers everything so the picker is not ` +
-        `missing half the map; the label says what you are looking at.`);
+    `NDCG@${view.k}: only the top ${view.k} count. A single query is an anecdote &mdash; the ` +
+    `estimate is the sealed fold, 0.7530 [0.7148, 0.7903] over 72 groups, against 0.6429 for ` +
+    `price+rating and a 0.5519 floor.`;
 }
 
 /* --- wiring ------------------------------------------------------------------------------------ */
@@ -611,6 +580,17 @@ $("listing").onchange = e =>
 
 (async () => {
   OPT = await (await fetch("/api/options")).json();
+  const cv = OPT.coverage;
+  const worst = Object.entries(cv.biggest_hidden)
+    .map(([city, h]) => `${h.neighbourhood} (${city}, ${h.listings})`).join(", ");
+  $("coverage").innerHTML =
+    `The picker offers only <b>held-out</b> listings, so every score below is out-of-sample. ` +
+    `That leaves <b>${cv.hidden} of ${cv.neighbourhoods} neighbourhoods</b> unsearchable ` +
+    `&mdash; ${(cv.hidden_share * 100).toFixed(1)} % of listings, including the largest in each ` +
+    `city: ${worst}. The split moves whole connected components and a large neighbourhood is a ` +
+    `large component, so it lands in training entire. Showing those anyway would mean scoring ` +
+    `groups the model fitted, where the ordering is a memory rather than a prediction.`;
+
   fill($("s_city"), uniq(OPT.index.map(r => r.city)));
   refineSearch(0);
   $("quick").innerHTML += OPT.quick_picks.map(q =>
@@ -654,14 +634,13 @@ class _Session:
 
     def group(self, query_group: int) -> dict:
         if query_group not in self._cache:
-            listings = demo.group_listings(query_group, sealed_only=False)
+            listings = demo.group_listings(query_group)
             payload = demo.build_payload(listings, self._features)
             baseline = self._send(payload)
             if "error" in baseline:
                 raise ValueError(f"group {query_group}: {baseline['error']}")
             self._cache[query_group] = {
                 "listings": listings,
-                "sealed": demo.is_sealed(listings),
                 "payload": payload,
                 "truth": demo.truth_frame(listings),
                 "baseline": baseline,
@@ -682,7 +661,6 @@ class _Session:
         return {
             "query_group": query_group,
             "key": demo.group_key(session["listings"]),
-            "sealed": session["sealed"],
             "n": len(session["payload"]["listings"]),
             "edited": chosen,
             "fields": field_spec(self._listing(query_group, chosen), self._metadata),
@@ -694,9 +672,7 @@ class _Session:
                 }
                 for row in session["baseline"]["ranked"][:DISPLAY_LIMIT]
             ],
-            "baseline_view": ranking_view(
-                session["baseline"], truth, chosen, sealed=session["sealed"]
-            ),
+            "baseline_view": ranking_view(session["baseline"], truth, chosen),
         }
 
     def search(self, city: str, neighbourhood: str, room_type: str, guests: int) -> dict:
@@ -728,13 +704,7 @@ class _Session:
         response = self._send(demo.perturb(session["payload"], listing_id, clean))
         if "error" in response:
             return {"error": response["error"]}
-        return ranking_view(
-            response,
-            session["truth"],
-            listing_id,
-            before=session["baseline"],
-            sealed=session["sealed"],
-        )
+        return ranking_view(response, session["truth"], listing_id, before=session["baseline"])
 
     def preset(self, name: str, query_group: int, listing_id: str) -> dict:
         return {"edits": preset_edits(name, self._listing(query_group, listing_id))}
@@ -753,6 +723,7 @@ class _Session:
                 for row in index.itertuples()
             ],
             "guests": demo.tier_guest_choices(),
+            "coverage": demo.coverage(),
             "presets": list(PRESETS),
             "quick_picks": [
                 {"name": name, "query_group": spec["query_group"], "note": spec["note"]}
@@ -841,6 +812,13 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="interface to bind. Loopback by default so the console is not exposed to the "
+        "network; the container image overrides it to 0.0.0.0 because a container's own "
+        "namespace is the boundary there",
+    )
+    parser.add_argument(
         "--local",
         action="store_true",
         help="score in this process rather than calling the endpoint — no Azure, no cost",
@@ -859,10 +837,10 @@ def main(argv: Sequence[str] | None = None) -> None:
             return demo.invoke(uri, key, payload)
 
     session = _Session(metadata["features"], metadata, send)
-    address = f"http://127.0.0.1:{args.port}/"
+    address = f"http://{'127.0.0.1' if args.host == '0.0.0.0' else args.host}:{args.port}/"  # noqa: S104
     print(f"scoring against: {source}\nconsole:         {address}\nCtrl-C to stop")
 
-    server = ThreadingHTTPServer(("127.0.0.1", args.port), _handler(session))
+    server = ThreadingHTTPServer((args.host, args.port), _handler(session))
     if not args.no_open:
         webbrowser.open(address)
     try:
