@@ -35,6 +35,7 @@ import os
 import urllib.error
 import urllib.request
 from collections.abc import Mapping, Sequence
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -47,6 +48,7 @@ from rental_ranking.cloud.score import ID_FIELD as ID_COLUMN
 from rental_ranking.data import paths
 from rental_ranking.evaluate.metrics import ndcg_at_k
 from rental_ranking.evaluate.report import random_floor
+from rental_ranking.features import groups
 from rental_ranking.train import baseline, split
 
 #: Query groups the demonstration ships, and why each is here. **The rule that chose them is
@@ -72,6 +74,7 @@ DEMO_QUERIES: dict[str, dict[str, Any]] = {
 #: features of the demonstration — a subset chosen to be humanly readable. ``grade`` and
 #: ``blocked_fraction_90`` are the **truth**, held locally and never sent to the endpoint.
 READABLE_COLUMNS: tuple[str, ...] = (
+    "name",
     "grade",
     "blocked_fraction_90",
     "number_of_reviews",
@@ -387,25 +390,194 @@ def invoke(uri: str, key: str, payload: Mapping[str, Any], timeout: int = 60) ->
 # --- the script ------------------------------------------------------------------------------
 
 
+#: Columns joined back from the processed layer purely so a human can read the ranking: the
+#: listing's public title and its neighbourhood. **Neither is a feature** — they are not in the
+#: served model's column list, so :func:`build_payload` cannot send them. ``name`` is a kept
+#: column in the data contract (``host_name`` is the one that is stripped); the id stays hashed.
+DESCRIPTION_COLUMNS: tuple[str, ...] = ("name", "neighbourhood_cleansed")
+
+
+@lru_cache(maxsize=1)
+def sealed_table() -> pd.DataFrame:
+    """The sealed fold, with the query-group key and the human-readable columns joined back.
+
+    Cached: resolving the fold runs connected components over 44,684 rows, and every query in a
+    session needs the same answer.
+    """
+    table = pd.read_parquet(paths.FEATURE_TABLE_PATH)
+    fold, _ = split.assign_folds(table)
+    sealed = table[fold.to_numpy() == split.SEALED_FOLD].copy()
+
+    described = pd.read_parquet(
+        paths.PROCESSED_DIR / "listings.parquet",
+        columns=[ID_COLUMN, *DESCRIPTION_COLUMNS],
+    ).drop_duplicates(ID_COLUMN)
+    sealed = sealed.merge(described, on=ID_COLUMN, how="left", validate="one_to_one")
+
+    # capacity_tier is derived rather than read, for the same reason groups.py derives it: the
+    # search form must offer the tiers the groups were actually built from.
+    return sealed.assign(capacity_tier=groups.capacity_tier(sealed).to_numpy())
+
+
+def group_listings(query_group: int) -> pd.DataFrame:
+    """One query group's candidate set, sealed-fold only.
+
+    Raises:
+        KeyError: If the group is not in the sealed fold. A demonstration run on a group the
+            model trained against shows nothing, so this refuses rather than degrades.
+    """
+    sealed = sealed_table()
+    listings = sealed[sealed["query_group"] == query_group]
+    if listings.empty:
+        raise KeyError(
+            f"query group {query_group} is not in the sealed fold. Only fold "
+            f"{split.SEALED_FOLD} is out-of-sample; every other group was trained on"
+        )
+    return listings
+
+
 def _sealed_listings(name: str) -> tuple[pd.DataFrame, dict]:
-    """The candidate set for one demo query, read from the feature table and the fold assignment."""
+    """The candidate set for one named demo query."""
     if name not in DEMO_QUERIES:
         raise SystemExit(f"unknown query {name!r}; known: {sorted(DEMO_QUERIES)}")
     spec = DEMO_QUERIES[name]
+    try:
+        return group_listings(spec["query_group"]), spec
+    except KeyError as error:
+        raise SystemExit(str(error)) from error
 
-    table = pd.read_parquet(paths.FEATURE_TABLE_PATH)
-    fold, _ = split.assign_folds(table)
-    table = table.assign(fold=fold.to_numpy())
 
-    listings = table[table["query_group"] == spec["query_group"]]
-    if listings.empty:
-        raise SystemExit(f"query group {spec['query_group']} is not in the feature table")
-    if not (listings["fold"] == split.SEALED_FOLD).all():
-        raise SystemExit(
-            f"query group {spec['query_group']} is not entirely in the sealed fold; "
-            "a demonstration on training data shows nothing"
+#: What a guest picks, and what the query group is keyed on — the same four things. The console's
+#: search form is not a skin over the demo: ``features/groups.py`` builds the group from
+#: ``city x neighbourhood_cleansed x room_type x capacity_tier`` precisely because that is "what a
+#: guest would have typed", so choosing those four *is* choosing the candidate set.
+SEARCH_KEY: tuple[str, ...] = ("city", "neighbourhood_cleansed", "room_type", "capacity_tier")
+
+
+def search_index() -> pd.DataFrame:
+    """Every search a guest could run against the sealed fold, and the group it lands in.
+
+    One row per ``(city, neighbourhood, room type, capacity tier)`` present in the sealed fold,
+    carrying the query group those listings belong to and how wide that group turned out to be.
+
+    **The width columns are observed, not claimed.** ``neighbourhoods`` and ``tiers`` count what
+    the resolved group actually contains. A group with 12 neighbourhoods in it is one whose
+    original key was too thin to reach the minimum of 5 and was pooled at a coarser rung
+    (``groups.GROUP_CASCADE``) — so a guest who picks that neighbourhood is really competing
+    city-wide, and the console says so rather than implying the neighbourhood narrowed anything.
+    """
+    sealed = sealed_table()
+    width = sealed.groupby("query_group", observed=True).agg(
+        group_size=(ID_COLUMN, "size"),
+        neighbourhoods=("neighbourhood_cleansed", "nunique"),
+        tiers=("capacity_tier", "nunique"),
+    )
+    index = (
+        sealed.groupby([*SEARCH_KEY, "query_group"], observed=True)
+        .agg(matching=(ID_COLUMN, "size"))
+        .reset_index()
+        .merge(width, on="query_group", how="left")
+    )
+    return index.sort_values([*SEARCH_KEY]).reset_index(drop=True)
+
+
+def tier_guest_choices() -> dict[str, list[int]]:
+    """Party sizes to offer per capacity tier, derived from the bounds rather than restated.
+
+    A hand-written map would drift the first time ``CAPACITY_TIER_BOUNDS`` changed, and it would
+    drift silently: the console would offer a guest count that lands in a different tier than the
+    label above it says.
+    """
+    bounds = groups.CAPACITY_TIER_BOUNDS
+    labels = groups.CAPACITY_TIER_LABELS
+    choices: dict[str, list[int]] = {}
+    for position, label in enumerate(labels):
+        low, high = int(bounds[position]) + 1, int(bounds[position + 1])
+        # The top tier is open (bound 100 is a sentinel, not a party size anybody books), so it
+        # gets a spread rather than every value up to the sentinel.
+        span = (
+            [low, low + 2, low + 4, low + 8]
+            if position == len(labels) - 1
+            else range(low, high + 1)
         )
-    return listings, spec
+        choices[label] = list(span)
+    return choices
+
+
+def group_key(listings: pd.DataFrame) -> dict:
+    """What one query group actually contains, in the terms a guest searched in.
+
+    Observed rather than looked up: a group formed at a fallback rung spans several
+    neighbourhoods, and the only honest way to say which is to count them.
+    """
+    neighbourhoods = listings["neighbourhood_cleansed"].unique()
+    tiers = [str(tier) for tier in listings["capacity_tier"].unique()]
+    return {
+        "city": str(listings["city"].iloc[0]),
+        "room_type": str(listings["room_type"].iloc[0]),
+        "neighbourhood": str(neighbourhoods[0]) if len(neighbourhoods) == 1 else None,
+        "neighbourhoods": int(len(neighbourhoods)),
+        "capacity_tier": tiers[0] if len(tiers) == 1 else None,
+        "tiers": int(len(tiers)),
+    }
+
+
+def guests_to_tier(guests: int) -> str:
+    """The capacity tier a party size falls in, using the bounds the groups were built from.
+
+    Raises:
+        ValueError: If ``guests`` is outside the tier bounds.
+    """
+    tier = pd.cut(
+        pd.Series([guests]),
+        bins=groups.CAPACITY_TIER_BOUNDS,
+        labels=groups.CAPACITY_TIER_LABELS,
+    ).iloc[0]
+    if pd.isna(tier):
+        raise ValueError(
+            f"{guests} guests is outside the capacity tiers "
+            f"{groups.CAPACITY_TIER_LABELS} (bounds {groups.CAPACITY_TIER_BOUNDS})"
+        )
+    return str(tier)
+
+
+def resolve_search(city: str, neighbourhood: str, room_type: str, guests: int) -> dict:
+    """Turn one search into the query group that answers it.
+
+    Returns:
+        ``{"query_group", "matching", "group_size", "neighbourhoods", "tiers", "pooled"}``.
+        ``pooled`` is True when the resolved group spans more than one neighbourhood, meaning
+        the neighbourhood the guest chose did not have five sealed listings of its own and the
+        competition is wider than the search implies.
+
+    Raises:
+        KeyError: If no sealed listing matches. The sealed fold is a fifth of the population, so
+            plenty of real searches have no out-of-sample group — saying so is the honest answer.
+    """
+    index = search_index()
+    tier = guests_to_tier(guests)
+    hit = index[
+        (index["city"] == city)
+        & (index["neighbourhood_cleansed"] == neighbourhood)
+        & (index["room_type"] == room_type)
+        & (index["capacity_tier"] == tier)
+    ]
+    if hit.empty:
+        raise KeyError(
+            f"no sealed-fold listing matches {city} / {neighbourhood} / {room_type} / "
+            f"{guests} guests (tier {tier}). Only fold {split.SEALED_FOLD} is out-of-sample, so "
+            "not every real search has a group here"
+        )
+    row = hit.iloc[0]
+    return {
+        "query_group": int(row["query_group"]),
+        "matching": int(row["matching"]),
+        "group_size": int(row["group_size"]),
+        "neighbourhoods": int(row["neighbourhoods"]),
+        "tiers": int(row["tiers"]),
+        "capacity_tier": tier,
+        "pooled": bool(row["neighbourhoods"] > 1),
+    }
 
 
 def _serving_metadata() -> dict:
@@ -424,9 +596,16 @@ _DECIMALS: dict[str, int] = {
 }
 
 
+#: Width the listing title is cut to in the terminal table. The full title is in the JSON and in
+#: the console; a 100-character name would push every numeric column off the screen.
+_TITLE_WIDTH = 26
+
+
 def _display(table: pd.DataFrame) -> pd.DataFrame:
-    """Round each column to the precision that column is read at."""
+    """Round each column to the precision that column is read at, and cut the title to width."""
     shown = table.round({c: d for c, d in _DECIMALS.items() if c in table.columns})
+    if "name" in shown.columns:
+        shown["name"] = shown["name"].astype("string").str.slice(0, _TITLE_WIDTH)
     for column, decimals in _DECIMALS.items():
         if decimals == 0 and column in shown.columns:
             shown[column] = shown[column].astype("Int64")

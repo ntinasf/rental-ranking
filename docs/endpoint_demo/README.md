@@ -41,19 +41,27 @@ the honest picture of what the model leans on, and it agrees with what notebook 
 
 ## The console
 
-`python -m rental_ranking.cloud.console` serves a local page: pick a query group, pick a listing,
-change its fields — real dropdowns for the five categoricals, boxes for the numerics — and re-rank
-the **real candidate set** with the **held-out grades** shown beside the result. It reports where
-the edited listing moved and what the metric did.
+`python -m rental_ranking.cloud.console` serves a local page that works the way a guest would:
 
 ```bash
 uv run python -m rental_ranking.cloud.console --local   # no endpoint, no cost
 uv run python -m rental_ranking.cloud.console           # proxies to AML_ENDPOINT_URI
 ```
 
-It is a **proxy, not a nicety**: a browser cannot call a managed endpoint directly (no CORS
-headers on the preflight), and putting the auth key in a page would hand a live credential to
-anything the browser loads. The key stays in the Python process. Standard library only.
+**Search** picks a city, a neighbourhood, a room type and a party size. That is not a skin over
+the demo — it is *literally the query-group key*. `features/groups.py` builds the group from
+`city × neighbourhood_cleansed × room_type × capacity_tier` precisely because that is "what a
+guest would have typed", so choosing those four selects the candidate set the model ranks. 112
+searches resolve across 74 sealed groups.
+
+**41 % of those searches land in a pooled group** — fewer than five sealed listings shared the
+exact key, so the cascade re-keyed them at a coarser rung. The console says so in the banner and
+highlights the listings that actually matched your search, because a guest who picks a thin
+neighbourhood is really competing city-wide, and hiding that would misrepresent the group.
+
+**Edit** any listing in the result: dropdowns carrying the real training levels for the five
+categoricals, boxes for the numerics, one-click presets. Re-rank and the table redraws with the
+listing's new position, the movement, and the metric before and after.
 
 Two constraints are deliberate. It **edits a real listing rather than composing one** — an
 invented row has no grade, so its ranking cannot be checked, and the most such a demo can show is
@@ -63,6 +71,10 @@ contained.
 
 Re-ranking without touching anything is a true no-op — an untouched box submits the value at full
 precision rather than the rounded one it displays — so any movement is attributable to the edit.
+
+It is a **proxy, not a nicety**: a browser cannot call a managed endpoint directly (no CORS
+headers on the preflight), and putting the auth key in a page would hand a live credential to
+anything the browser loads. The key stays in the Python process. Standard library only.
 
 ## Reproducing it
 

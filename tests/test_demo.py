@@ -18,6 +18,7 @@ import pandas as pd
 import pytest
 
 from rental_ranking.cloud import demo
+from rental_ranking.features import groups
 from rental_ranking.train.lambdamart import restore_dtypes
 
 # --- fixtures ---------------------------------------------------------------------------------
@@ -218,3 +219,63 @@ def test_an_absent_column_and_an_all_null_column_produce_the_same_matrix() -> No
         pd.DataFrame({"price": [80.0], "rating_shrunk": [None], "room_type": ["a"]}), metadata
     )
     pd.testing.assert_frame_equal(absent, explicit)
+
+
+# --- the search key -----------------------------------------------------------------------------
+
+
+def test_every_offered_party_size_lands_in_the_tier_it_is_offered_under() -> None:
+    """The drift guard. ``tier_guest_choices`` derives the party sizes and ``guests_to_tier``
+    re-derives the tier; if either stopped reading ``CAPACITY_TIER_BOUNDS`` the console would
+    offer a guest count under a label that sends it somewhere else."""
+    for tier, party_sizes in demo.tier_guest_choices().items():
+        for guests in party_sizes:
+            assert demo.guests_to_tier(guests) == tier
+
+
+def test_the_guest_choices_cover_every_tier_the_groups_were_built_on() -> None:
+    assert set(demo.tier_guest_choices()) == set(groups.CAPACITY_TIER_LABELS)
+
+
+def test_a_party_size_outside_the_bounds_is_refused_not_clamped() -> None:
+    with pytest.raises(ValueError, match="outside the capacity tiers"):
+        demo.guests_to_tier(0)
+
+
+def test_guests_to_tier_agrees_with_the_module_that_built_the_groups() -> None:
+    """Two implementations of one rule is one too many; this pins them together."""
+    frame = pd.DataFrame({"accommodates": [1, 2, 3, 4, 5, 7, 8, 30]})
+    expected = groups.capacity_tier(frame).astype(str).tolist()
+    assert [demo.guests_to_tier(n) for n in frame["accommodates"]] == expected
+
+
+def _group_frame(neighbourhoods: list[str], tiers: list[str]) -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "city": ["athens"] * len(neighbourhoods),
+            "room_type": ["Entire home/apt"] * len(neighbourhoods),
+            "neighbourhood_cleansed": neighbourhoods,
+            "capacity_tier": tiers,
+        }
+    )
+
+
+def test_group_key_names_the_neighbourhood_when_the_group_has_only_one() -> None:
+    key = demo.group_key(_group_frame(["Plaka", "Plaka"], ["3-4", "3-4"]))
+    assert key["neighbourhood"] == "Plaka"
+    assert key["neighbourhoods"] == 1
+
+
+def test_group_key_refuses_to_name_a_neighbourhood_for_a_pooled_group() -> None:
+    """A group formed at a fallback rung spans several; naming the first would be a lie."""
+    key = demo.group_key(_group_frame(["Plaka", "Exarchia", "Kolonaki"], ["3-4"] * 3))
+    assert key["neighbourhood"] is None
+    assert key["neighbourhoods"] == 3
+
+
+def test_the_readable_description_columns_are_not_features() -> None:
+    """``name`` and the neighbourhood are joined back for a human. If either reached the payload
+    the demonstration would be sending the endpoint something the model never trained on."""
+    listings = _listings().assign(name=["a title", "b title", "c title"])
+    body = demo.build_payload(listings, _FEATURES)
+    assert all("name" not in row for row in body["listings"])
