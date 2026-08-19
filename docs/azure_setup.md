@@ -377,3 +377,19 @@ float or bool` — an unhandled exception, so a 500 with no message. An *absent*
 fine, because `reindex` gives it `float64` NaN, which is why the first pass's "sparse" request
 passed. `restore_dtypes` now coerces, and names the column when a value genuinely is not a
 number. Fix and three regression tests in `train/lambdamart.py` and `tests/test_demo.py`.
+
+**Endpoint URI gotcha (2026-08-19).** The Studio endpoint page lists the **Swagger URI** directly
+below the **REST endpoint**, and only the second one scores. Posting to `/swagger.json` returns:
+
+```
+HTTP 424: {"message": "The method is not allowed for the requested URL."}
+```
+
+424 from the front door wrapping a 405 from the inference server, which answers GET on that path
+and nothing else. Nothing in the chain names the URL or the mistake, and the endpoint is perfectly
+healthy throughout. `demo.endpoint_address` now refuses a URI that does not end in `/score` and
+prints the corrected one. Take it from the CLI rather than the portal:
+
+```bash
+az ml online-endpoint show --name rental-ranker --query scoring_uri -o tsv
+```

@@ -128,7 +128,9 @@ az ml online-endpoint  create -f pipelines/endpoint.yml
 az ml online-deployment create -f pipelines/deployment.yml --all-traffic
 
 # 2. address -> .env (gitignored; the key dies with the endpoint, so there is nothing to rotate)
-az ml online-endpoint show --name rental-ranker --query scoring_uri -o tsv
+#    Take the REST endpoint, NOT the Swagger URI listed directly below it in the Studio: a POST
+#    to /swagger.json returns HTTP 424 wrapping a 405, naming neither the URL nor the mistake.
+az ml online-endpoint show --name rental-ranker --query scoring_uri -o tsv   # ends in /score
 az ml online-endpoint get-credentials --name rental-ranker --query primaryKey -o tsv
 
 # 3. demonstrate

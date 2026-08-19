@@ -167,6 +167,45 @@ def test_query_quality_puts_a_reversed_ranking_below_the_floor() -> None:
 # --- the network half -----------------------------------------------------------------------------
 
 
+@pytest.mark.parametrize(
+    ("given", "expected"),
+    [
+        (
+            "https://x.italynorth.inference.ml.azure.com/swagger.json",
+            "https://x.italynorth.inference.ml.azure.com/score",
+        ),
+        (
+            "https://x.italynorth.inference.ml.azure.com",
+            "https://x.italynorth.inference.ml.azure.com/score",
+        ),
+        (
+            "https://x.italynorth.inference.ml.azure.com/",
+            "https://x.italynorth.inference.ml.azure.com/score",
+        ),
+    ],
+)
+def test_a_uri_that_is_not_the_scoring_path_is_caught_before_the_call(
+    monkeypatch, given: str, expected: str
+) -> None:
+    """The Studio page lists the Swagger URI one line below the REST endpoint. Posting to it
+    returns HTTP 424 wrapping a 405, which names neither the URL nor the mistake — measured
+    2026-08-19 against a live endpoint."""
+    monkeypatch.setattr(demo, "load_dotenv", lambda *a, **k: None)
+    monkeypatch.setenv(demo.URI_VAR, given)
+    monkeypatch.setenv(demo.KEY_VAR, "not-a-real-key")
+
+    with pytest.raises(RuntimeError) as caught:
+        demo.endpoint_address()
+    assert expected in str(caught.value)
+
+
+def test_a_scoring_uri_is_accepted_and_normalised(monkeypatch) -> None:
+    monkeypatch.setattr(demo, "load_dotenv", lambda *a, **k: None)
+    monkeypatch.setenv(demo.URI_VAR, "  https://x.inference.ml.azure.com/score/ ")
+    monkeypatch.setenv(demo.KEY_VAR, "k")
+    assert demo.endpoint_address() == ("https://x.inference.ml.azure.com/score", "k")
+
+
 def test_a_missing_address_names_both_variables_and_the_commands(monkeypatch) -> None:
     monkeypatch.setattr(demo, "load_dotenv", lambda *a, **k: None)
     monkeypatch.delenv(demo.URI_VAR, raising=False)

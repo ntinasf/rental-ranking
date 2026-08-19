@@ -93,6 +93,13 @@ WITHHELD_COLUMNS: tuple[str, ...] = ("grade", "blocked_fraction_90", "query_grou
 URI_VAR = "AML_ENDPOINT_URI"
 KEY_VAR = "AML_ENDPOINT_KEY"
 
+#: Path a managed online endpoint serves scoring on. The Studio endpoint page lists the **Swagger
+#: URI** one line below the REST endpoint, and pasting that one is the easy mistake: the scoring
+#: container answers GET on ``/swagger.json`` and nothing else, so a POST there returns 405 "The
+#: method is not allowed for the requested URL", which the front door re-wraps as an HTTP **424**.
+#: Nothing in that chain mentions the URL, so the guard belongs here.
+SCORING_PATH = "/score"
+
 DEFAULT_K = 10
 
 #: The demo query the two edge-case requests are derived from. Deriving them from a real query
@@ -349,6 +356,18 @@ def endpoint_address() -> tuple[str, str]:
             "  az ml online-endpoint get-credentials --name rental-ranker "
             "--query primaryKey -o tsv\n"
             "Both die with the endpoint; there is nothing to rotate after teardown."
+        )
+
+    uri = uri.strip().rstrip("/")
+    if not uri.endswith(SCORING_PATH):
+        corrected = uri.rsplit("/", 1)[0] + SCORING_PATH if "/" in uri[8:] else uri + SCORING_PATH
+        raise RuntimeError(
+            f"{URI_VAR} does not end in {SCORING_PATH!r}:\n  {uri}\n"
+            f"Try:\n  {corrected}\n"
+            "The Studio endpoint page lists the Swagger URI directly below the REST endpoint, and "
+            "only the REST one scores. Posting to the Swagger URI returns HTTP 424 wrapping a 405 "
+            "'method is not allowed', which names neither the URL nor the mistake.\n"
+            "  az ml online-endpoint show --name rental-ranker --query scoring_uri -o tsv"
         )
     return uri, key
 
