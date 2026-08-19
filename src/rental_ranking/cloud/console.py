@@ -203,46 +203,77 @@ def coerce_edits(edits: Mapping[str, Any], spec: Sequence[Mapping[str, Any]]) ->
 # --- the answer the page renders ---------------------------------------------------------------
 
 
+#: Rows the table draws. The largest real query group is 2,088 listings; a page that renders all
+#: of them is unreadable and slow, and NDCG@10 only ever looks at the first ten anyway. The edited
+#: listing is always included, wherever it landed.
+DISPLAY_LIMIT = 100
+
+
 def ranking_view(
     response: Mapping[str, Any],
     truth: pd.DataFrame,
     edited: str,
     before: Mapping[str, Any] | None = None,
     k: int = demo.DEFAULT_K,
+    sealed: bool = True,
+    limit: int = DISPLAY_LIMIT,
 ) -> dict:
     """The response, the truth beside it, and the movement — everything the page draws.
+
+    **No metric is computed for a group the model trained on.** The console searches the whole
+    ranked population, because restricting it to the sealed fold hid 17 of 75 neighbourhoods
+    including the largest in every city. The cost of that reach is that most searches land
+    in-sample, where an NDCG would be a fitted number wearing the costume of a result — and a
+    cropped screenshot of one would be indefensible. So when ``sealed`` is False the metrics are
+    not suppressed in the page, they are **never put in the payload**: there is nothing to leak.
+
+    Rank movement survives, because "this listing fell 1 -> 15 when I removed its reviews" is a
+    statement about the model's behaviour, not an estimate of its quality.
 
     Args:
         response: The ranking under the current edits.
         truth: Held-out grades and readable attributes, indexed by id.
         edited: The listing being edited, so the page can mark its row.
-        before: The unedited ranking, if there is one, to report the rank and NDCG move against.
+        before: The unedited ranking, if there is one, to report the movement against.
         k: Metric cut-off.
+        sealed: Whether this group was held out of training. False suppresses every metric.
+        limit: Rows to return. The edited listing is always among them.
 
     Returns:
-        A JSON-serialisable dict: ``rows``, ``metrics``, ``edited``, and ``moved`` (``null`` when
-        there is nothing to compare against).
+        A JSON-serialisable dict: ``rows``, ``n_rows``, ``edited``, ``k``, ``sealed``, ``moved``,
+        and ``metrics`` — the last two carrying NDCG only when ``sealed``.
     """
     table = demo.explain(response, truth, k=k).reset_index()
-    quality = demo.query_quality(response, truth, k=k)
+    shown = table.head(limit)
+    if edited not in set(shown["id"]):
+        shown = pd.concat([shown, table[table["id"] == edited]])
 
-    rows = json.loads(table.to_json(orient="records"))
+    rows = json.loads(shown.to_json(orient="records"))
     moved = None
     if before is not None:
-        prior = demo.query_quality(before, truth, k=k)
         moved = {
             "rank_before": demo.rank_of(before, edited),
             "rank_after": demo.rank_of(response, edited),
-            "ndcg_before": float(prior["endpoint"]),
-            "ndcg_after": float(quality["endpoint"]),
         }
-    return {
+    view = {
         "rows": rows,
-        "metrics": {name: float(value) for name, value in quality.items()},
+        "n_rows": len(table),
         "edited": edited,
         "k": k,
+        "sealed": sealed,
         "moved": moved,
+        "metrics": None,
     }
+    if not sealed:
+        return view
+
+    quality = demo.query_quality(response, truth, k=k)
+    view["metrics"] = {name: float(value) for name, value in quality.items()}
+    if moved is not None:
+        prior = demo.query_quality(before, truth, k=k)
+        moved["ndcg_before"] = float(prior["endpoint"])
+        moved["ndcg_after"] = float(quality["endpoint"])
+    return view
 
 
 # --- the page ---------------------------------------------------------------------------------
@@ -292,6 +323,12 @@ main { padding:16px 22px 40px; overflow-x:auto; }
 .banner { border:1px solid var(--line); background:var(--panel); border-radius:6px;
   padding:9px 12px; margin-bottom:14px; font-size:12.5px; }
 .banner.pooled { border-color:var(--warn); }
+.insample { border:1px solid var(--warn); border-radius:6px; padding:10px 13px; margin-bottom:12px;
+  background:color-mix(in srgb, var(--warn) 9%, transparent); font-size:12.5px; }
+.insample b { color:var(--warn); }
+.tag { display:inline-block; border:1px solid currentColor; border-radius:4px; padding:0 5px;
+  font-size:10px; letter-spacing:.06em; text-transform:uppercase; vertical-align:2px; }
+.tag.sealed { color:var(--up); } .tag.trained { color:var(--warn); }
 .banner small { display:block; color:var(--dim); margin-top:3px; }
 .banner b { font-weight:600; }
 
@@ -333,7 +370,7 @@ tr.cut td { border-bottom:2px solid var(--accent); }
 </style>
 
 <header>
-  <h1>rental-ranker <span>&mdash; search a sealed-fold candidate set, score it live, read it against the held-out grades</span></h1>
+  <h1>rental-ranker <span>&mdash; search a real candidate set, score it live, read it against the grades</span></h1>
   <div class="search">
     <div class="cell"><b>city</b><select id="s_city"></select></div>
     <div class="cell"><b>neighbourhood</b><select id="s_nbhd"></select></div>
@@ -408,7 +445,9 @@ async function load(url) {
   const out = await (await fetch(url)).json();
   if (out.error) { $("err").textContent = out.error; return; }
   STATE = out;
-  HITS = new Set(out.search ? out.search.matching_ids : []);
+  // Only worth marking when the search is narrower than the group it landed in. If every
+  // listing matched, highlighting every listing says nothing.
+  HITS = new Set(out.search && out.search.matching < out.n ? out.search.matching_ids : []);
   fill($("listing"), []);
   $("listing").innerHTML = STATE.listings.map((l, i) =>
     `<option value="${l.id}">#${i + 1} · grade ${l.grade} · ${l.name || l.id}</option>`).join("");
@@ -422,11 +461,14 @@ function drawBanner() {
   const k = STATE.key;
   const where = k.neighbourhood || `${k.neighbourhoods} neighbourhoods`;
   const tier = k.capacity_tier ? `${k.capacity_tier} guests` : `${k.tiers} capacity tiers`;
-  const head = s
+  const tag = STATE.sealed
+    ? `<span class="tag sealed">held out</span>`
+    : `<span class="tag trained">trained on</span>`;
+  const head = (s
     ? `<b>${s.city} · ${s.neighbourhood} · ${s.room_type} · ${s.guests} guests</b> ` +
-      `&rarr; query group <b>${STATE.query_group}</b>, ${STATE.n} listings`
+      `&rarr; query group <b>${STATE.query_group}</b>, ${STATE.n} listings `
     : `<b>${k.city} · ${where} · ${k.room_type} · ${tier}</b> ` +
-      `&rarr; query group <b>${STATE.query_group}</b>, ${STATE.n} listings`;
+      `&rarr; query group <b>${STATE.query_group}</b>, ${STATE.n} listings `) + tag;
   const tail = !s ? "the query-group key is city × neighbourhood × room type × capacity tier &mdash; " +
       "the same four things a guest picks, which is why searching for them selects a candidate set"
     : s.pooled
@@ -507,17 +549,26 @@ const COLS = [["rank", 0], ["id", null], ["name", null], ["score", 4], ["grade",
 
 function draw(view) {
   const m = view.metrics;
-  $("cards").innerHTML = [
+  // No metric exists for a group the model trained on -- the server does not send one, so there
+  // is nothing here to accidentally screenshot.
+  $("cards").innerHTML = m ? [
     ["endpoint", m.endpoint], ["reviews", m.baseline_reviews],
     ["price+rating", m.baseline_price_rating], ["random floor", m.random],
-  ].map(([n, v]) => `<div class="card"><b>${v.toFixed(4)}</b><small>${n}</small></div>`).join("");
+  ].map(([n, v]) => `<div class="card"><b>${v.toFixed(4)}</b><small>${n}</small></div>`).join("")
+   : `<div class="insample"><b>No score is shown for this search.</b> The served model was refit ` +
+     `on all four development folds, so it fitted these grades — an NDCG here would measure how ` +
+     `well it memorised, not how well it ranks. The ordering below is still worth reading; the ` +
+     `number would not be. Search a <span class="tag sealed">held out</span> group, or use a ` +
+     `worked example, to get one.</div>`;
 
   const mv = view.moved;
+  const delta = mv && mv.ndcg_before !== undefined
+    ? ` &nbsp;·&nbsp; NDCG@${view.k} ${mv.ndcg_before.toFixed(4)} → ${mv.ndcg_after.toFixed(4)}` : "";
   $("move").innerHTML = !mv ? "" :
-    `<code>${view.edited}</code> &nbsp; rank <b>${mv.rank_before} → ${mv.rank_after}</b> of ${view.rows.length} ` +
+    `<code>${view.edited}</code> &nbsp; rank <b>${mv.rank_before} → ${mv.rank_after}</b> of ${view.n_rows} ` +
     `<span class="${mv.rank_after < mv.rank_before ? "up" : mv.rank_after > mv.rank_before ? "down" : ""}">` +
     `${mv.rank_after === mv.rank_before ? "(unmoved)" : mv.rank_after < mv.rank_before ? "▲" : "▼"}</span>` +
-    ` &nbsp;·&nbsp; NDCG@${view.k} ${mv.ndcg_before.toFixed(4)} → ${mv.ndcg_after.toFixed(4)}`;
+    delta;
 
   $("table").innerHTML =
     `<table><thead><tr>` + COLS.map(([c]) =>
@@ -533,11 +584,18 @@ function draw(view) {
         : `<td>${fmt(r[c], d)}</td>`).join("") + `</tr>`;
     }).join("") + `</tbody></table>`;
 
-  $("note").innerHTML =
-    `Grades are the <b>held-out truth</b> and are never sent to the scorer. The rule under the cut ` +
-    `line is NDCG@${view.k}: only the top ${view.k} count. A single query is an anecdote &mdash; the ` +
-    `estimate is the sealed fold, 0.7530 [0.7148, 0.7903] over 72 groups, against 0.6429 for ` +
-    `price+rating and a 0.5519 floor.`;
+  const truncated = view.n_rows > view.rows.length
+    ? `Showing the top ${view.rows.length} of <b>${view.n_rows}</b> listings (plus the one you are ` +
+      `editing, if it fell below). ` : "";
+  $("note").innerHTML = truncated +
+    `Grades are the truth and are never sent to the scorer. The rule under the cut line is ` +
+    `NDCG@${view.k}: only the top ${view.k} count. ` + (view.sealed
+      ? `A single query is an anecdote &mdash; the estimate is the sealed fold, 0.7530 ` +
+        `[0.7148, 0.7903] over 72 groups, against 0.6429 for price+rating and a 0.5519 floor.`
+      : `Only 74 of the 393 query groups are held out, and 17 of 75 neighbourhoods have no held-out ` +
+        `listing at all &mdash; the grouped split moves whole connected components, and a large ` +
+        `neighbourhood is a large component. The search covers everything so the picker is not ` +
+        `missing half the map; the label says what you are looking at.`);
 }
 
 /* --- wiring ------------------------------------------------------------------------------------ */
@@ -596,13 +654,14 @@ class _Session:
 
     def group(self, query_group: int) -> dict:
         if query_group not in self._cache:
-            listings = demo.group_listings(query_group)
+            listings = demo.group_listings(query_group, sealed_only=False)
             payload = demo.build_payload(listings, self._features)
             baseline = self._send(payload)
             if "error" in baseline:
                 raise ValueError(f"group {query_group}: {baseline['error']}")
             self._cache[query_group] = {
                 "listings": listings,
+                "sealed": demo.is_sealed(listings),
                 "payload": payload,
                 "truth": demo.truth_frame(listings),
                 "baseline": baseline,
@@ -623,6 +682,7 @@ class _Session:
         return {
             "query_group": query_group,
             "key": demo.group_key(session["listings"]),
+            "sealed": session["sealed"],
             "n": len(session["payload"]["listings"]),
             "edited": chosen,
             "fields": field_spec(self._listing(query_group, chosen), self._metadata),
@@ -632,9 +692,11 @@ class _Session:
                     "grade": int(truth.loc[row[ID_COLUMN], "grade"]),
                     "name": truth.loc[row[ID_COLUMN], "name"],
                 }
-                for row in session["baseline"]["ranked"]
+                for row in session["baseline"]["ranked"][:DISPLAY_LIMIT]
             ],
-            "baseline_view": ranking_view(session["baseline"], truth, chosen),
+            "baseline_view": ranking_view(
+                session["baseline"], truth, chosen, sealed=session["sealed"]
+            ),
         }
 
     def search(self, city: str, neighbourhood: str, room_type: str, guests: int) -> dict:
@@ -666,7 +728,13 @@ class _Session:
         response = self._send(demo.perturb(session["payload"], listing_id, clean))
         if "error" in response:
             return {"error": response["error"]}
-        return ranking_view(response, session["truth"], listing_id, before=session["baseline"])
+        return ranking_view(
+            response,
+            session["truth"],
+            listing_id,
+            before=session["baseline"],
+            sealed=session["sealed"],
+        )
 
     def preset(self, name: str, query_group: int, listing_id: str) -> dict:
         return {"edits": preset_edits(name, self._listing(query_group, listing_id))}

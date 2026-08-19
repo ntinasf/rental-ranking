@@ -51,13 +51,29 @@ uv run python -m rental_ranking.cloud.console           # proxies to AML_ENDPOIN
 **Search** picks a city, a neighbourhood, a room type and a party size. That is not a skin over
 the demo — it is *literally the query-group key*. `features/groups.py` builds the group from
 `city × neighbourhood_cleansed × room_type × capacity_tier` precisely because that is "what a
-guest would have typed", so choosing those four selects the candidate set the model ranks. 112
-searches resolve across 74 sealed groups.
+guest would have typed", so choosing those four selects the candidate set the model ranks. **516
+searches resolve across all 393 query groups and all 75 neighbourhoods.**
 
-**41 % of those searches land in a pooled group** — fewer than five sealed listings shared the
-exact key, so the cascade re-keyed them at a coarser rung. The console says so in the banner and
-highlights the listings that actually matched your search, because a guest who picks a thin
-neighbourhood is really competing city-wide, and hiding that would misrepresent the group.
+**Only 74 of those groups are held out, and the console says which you are looking at.** Restricting
+the search to the sealed fold was the first design and it was quietly misleading: **17 of 75
+neighbourhoods have no sealed listing at all — 34.8 % of the population, including the largest
+neighbourhood in every city.** Central Thessaloniki (4,162 listings, 89 % of that city) is one of
+them. The cause is the grouped split working correctly: whole connected components move together,
+and a big neighbourhood is a big component. A picker missing half the map is not one anyone can
+trust.
+
+So the search covers everything and every result is stamped `HELD OUT` or `TRAINED ON`. For a
+trained-on group **no metric is computed at all** — it is absent from the payload, not hidden in
+the page, so there is nothing to leak or crop. Rank *movement* still shows, because "it fell from
+1 to 15 when I stripped its reviews" is a statement about behaviour, not an estimate of quality.
+
+Search central Thessaloniki and look at the top twelve: **all grade 4**. That is what fitting your
+own training data looks like, and it is the clearest argument in the whole console for why the
+number is suppressed.
+
+**41 % of searches land in a pooled group** — fewer than five listings shared the exact key, so the
+cascade re-keyed them at a coarser rung. The banner says so, names how many neighbourhoods the
+group really spans, and highlights the listings that matched your literal search.
 
 **Edit** any listing in the result: dropdowns carrying the real training levels for the five
 categoricals, boxes for the numerics, one-click presets. Re-rank and the table redraws with the

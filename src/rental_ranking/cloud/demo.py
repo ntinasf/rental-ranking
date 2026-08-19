@@ -398,37 +398,61 @@ DESCRIPTION_COLUMNS: tuple[str, ...] = ("name", "neighbourhood_cleansed")
 
 
 @lru_cache(maxsize=1)
-def sealed_table() -> pd.DataFrame:
-    """The sealed fold, with the query-group key and the human-readable columns joined back.
+def ranked_table() -> pd.DataFrame:
+    """The whole ranked population with its fold, its search key and its readable columns.
 
-    Cached: resolving the fold runs connected components over 44,684 rows, and every query in a
+    Cached: resolving the folds runs connected components over 44,684 rows, and every query in a
     session needs the same answer.
     """
     table = pd.read_parquet(paths.FEATURE_TABLE_PATH)
     fold, _ = split.assign_folds(table)
-    sealed = table[fold.to_numpy() == split.SEALED_FOLD].copy()
+    table = table.assign(fold=fold.to_numpy())
 
     described = pd.read_parquet(
         paths.PROCESSED_DIR / "listings.parquet",
         columns=[ID_COLUMN, *DESCRIPTION_COLUMNS],
     ).drop_duplicates(ID_COLUMN)
-    sealed = sealed.merge(described, on=ID_COLUMN, how="left", validate="one_to_one")
+    table = table.merge(described, on=ID_COLUMN, how="left", validate="one_to_one")
 
     # capacity_tier is derived rather than read, for the same reason groups.py derives it: the
     # search form must offer the tiers the groups were actually built from.
-    return sealed.assign(capacity_tier=groups.capacity_tier(sealed).to_numpy())
+    return table.assign(capacity_tier=groups.capacity_tier(table).to_numpy())
 
 
-def group_listings(query_group: int) -> pd.DataFrame:
-    """One query group's candidate set, sealed-fold only.
+def sealed_table() -> pd.DataFrame:
+    """Just the sealed fold — the only listings whose grades the served model never saw."""
+    table = ranked_table()
+    return table[table["fold"] == split.SEALED_FOLD]
+
+
+def is_sealed(listings: pd.DataFrame) -> bool:
+    """Whether every listing here was held out of training.
+
+    **Binary on purpose.** Cross-validation gives each development fold an out-of-fold prediction
+    from a model that did not see it, but the *served* model was refit on all four development
+    folds — so for the thing behind the endpoint, a listing is either in fold
+    ``split.SEALED_FOLD`` or it is training data. There is no third category.
+    """
+    return bool((listings["fold"] == split.SEALED_FOLD).all())
+
+
+def group_listings(query_group: int, sealed_only: bool = True) -> pd.DataFrame:
+    """One query group's candidate set.
+
+    Args:
+        query_group: The group id.
+        sealed_only: Refuse a group the served model trained on. True for anything that reports a
+            number — the CLI, ``--capture`` — and False for the console, which searches the whole
+            population and labels what it found instead.
 
     Raises:
-        KeyError: If the group is not in the sealed fold. A demonstration run on a group the
-            model trained against shows nothing, so this refuses rather than degrades.
+        KeyError: If the group does not exist, or ``sealed_only`` and it is training data.
     """
-    sealed = sealed_table()
-    listings = sealed[sealed["query_group"] == query_group]
+    table = ranked_table()
+    listings = table[table["query_group"] == query_group]
     if listings.empty:
+        raise KeyError(f"query group {query_group} is not in the ranked population")
+    if sealed_only and not is_sealed(listings):
         raise KeyError(
             f"query group {query_group} is not in the sealed fold. Only fold "
             f"{split.SEALED_FOLD} is out-of-sample; every other group was trained on"
@@ -455,10 +479,19 @@ SEARCH_KEY: tuple[str, ...] = ("city", "neighbourhood_cleansed", "room_type", "c
 
 
 def search_index() -> pd.DataFrame:
-    """Every search a guest could run against the sealed fold, and the group it lands in.
+    """Every search a guest could run, and the query group it lands in.
 
-    One row per ``(city, neighbourhood, room type, capacity tier)`` present in the sealed fold,
-    carrying the query group those listings belong to and how wide that group turned out to be.
+    One row per ``(city, neighbourhood, room type, capacity tier)`` in the **whole** ranked
+    population, carrying the group those listings belong to, how wide that group turned out to be,
+    and whether it is out-of-sample.
+
+    **It covers everything, not just the sealed fold, and marks the difference.** Restricting the
+    search to fold 0 looked honest and was misleading in practice: 17 of 75 neighbourhoods have no
+    sealed listing at all — 34.8 % of the population, including the largest neighbourhood in every
+    city — because the grouped split moves whole connected components and a big neighbourhood is a
+    big component. A picker missing central Thessaloniki is not a picker anyone can trust. So the
+    search offers all of it and ``sealed`` says which results carry a metric; see
+    :func:`is_sealed`.
 
     **The width columns are observed, not claimed.** ``neighbourhoods`` and ``tiers`` count what
     the resolved group actually contains. A group with 12 neighbourhoods in it is one whose
@@ -466,17 +499,19 @@ def search_index() -> pd.DataFrame:
     (``groups.GROUP_CASCADE``) — so a guest who picks that neighbourhood is really competing
     city-wide, and the console says so rather than implying the neighbourhood narrowed anything.
     """
-    sealed = sealed_table()
-    width = sealed.groupby("query_group", observed=True).agg(
+    table = ranked_table()
+    width = table.groupby("query_group", observed=True).agg(
         group_size=(ID_COLUMN, "size"),
         neighbourhoods=("neighbourhood_cleansed", "nunique"),
         tiers=("capacity_tier", "nunique"),
+        sealed_rows=("fold", lambda f: int((f == split.SEALED_FOLD).sum())),
     )
+    width["sealed"] = width["sealed_rows"] == width["group_size"]
     index = (
-        sealed.groupby([*SEARCH_KEY, "query_group"], observed=True)
+        table.groupby([*SEARCH_KEY, "query_group"], observed=True)
         .agg(matching=(ID_COLUMN, "size"))
         .reset_index()
-        .merge(width, on="query_group", how="left")
+        .merge(width.drop(columns="sealed_rows"), on="query_group", how="left")
     )
     return index.sort_values([*SEARCH_KEY]).reset_index(drop=True)
 
@@ -545,14 +580,14 @@ def resolve_search(city: str, neighbourhood: str, room_type: str, guests: int) -
     """Turn one search into the query group that answers it.
 
     Returns:
-        ``{"query_group", "matching", "group_size", "neighbourhoods", "tiers", "pooled"}``.
-        ``pooled`` is True when the resolved group spans more than one neighbourhood, meaning
-        the neighbourhood the guest chose did not have five sealed listings of its own and the
-        competition is wider than the search implies.
+        ``{"query_group", "matching", "group_size", "neighbourhoods", "tiers", "pooled",
+        "sealed"}``. ``pooled`` is True when the resolved group spans more than one
+        neighbourhood, meaning the chosen neighbourhood did not have five listings of its own and
+        the competition is wider than the search implies. ``sealed`` is False when the served
+        model trained on this group, in which case no metric may be reported from it.
 
     Raises:
-        KeyError: If no sealed listing matches. The sealed fold is a fifth of the population, so
-            plenty of real searches have no out-of-sample group — saying so is the honest answer.
+        KeyError: If no listing matches the search at all.
     """
     index = search_index()
     tier = guests_to_tier(guests)
@@ -564,9 +599,8 @@ def resolve_search(city: str, neighbourhood: str, room_type: str, guests: int) -
     ]
     if hit.empty:
         raise KeyError(
-            f"no sealed-fold listing matches {city} / {neighbourhood} / {room_type} / "
-            f"{guests} guests (tier {tier}). Only fold {split.SEALED_FOLD} is out-of-sample, so "
-            "not every real search has a group here"
+            f"no listing matches {city} / {neighbourhood} / {room_type} / {guests} guests "
+            f"(tier {tier})"
         )
     row = hit.iloc[0]
     return {
@@ -577,6 +611,7 @@ def resolve_search(city: str, neighbourhood: str, room_type: str, guests: int) -
         "tiers": int(row["tiers"]),
         "capacity_tier": tier,
         "pooled": bool(row["neighbourhoods"] > 1),
+        "sealed": bool(row["sealed"]),
     }
 
 
