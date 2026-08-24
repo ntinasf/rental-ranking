@@ -1,0 +1,128 @@
+$schema: https://azuremlschemas.azureedge.net/latest/pipelineJob.schema.json
+type: pipeline
+
+# Azure ML PIPELINE job: raw snapshots -> processed layer -> feature table.
+#
+# THIS IS A WORKFLOW DEMONSTRATION, NOT THE BUILD PATH. Development, exploration and training all
+# run locally (CLAUDE.md); this job exists to show one thing the single-step `train_job.yml`
+# cannot — a MULTI-STEP pipeline with a versioned data asset going in, an intermediate flowing
+# between two components, and a feature table coming out. The local build remains canonical.
+#
+# Unlike the training job, this one IS expected to reproduce its local counterpart EXACTLY.
+# Verified locally on 2026-08-22 by rebuilding into an isolated root via RENTAL_RANKING_ROOT and
+# comparing SHA-256: listings, calendar, reviews and feature_table were all byte-identical. So the
+# check after the run is not "does it look right" but `shasum -a 256`, and anything other than a
+# match is a real finding. The one input that can break it is the salt — see below.
+#
+# Submit with (see docs/azure_setup.md for the Key Vault step that supplies ANON_SALT):
+#   az ml job create -f pipelines/preprocess_pipeline.yml \
+#     --set inputs.anon_salt="$ANON_SALT" \
+#     -g nf-rental-ranking -w nf-rental-ranking-ws
+#
+# The salt travels as a PIPELINE INPUT, not as `--set` on a nested jobs.* property. The first
+# attempt used the nested path and the variable never reached the container (2026-08-22): the
+# override applied to the YAML but did not survive into the step's runtime environment. A
+# top-level pipeline parameter is the idiom Azure ML actually supports for this, and it is
+# substituted into the step's command by the service rather than by the CLI.
+
+display_name: preprocess-and-features
+experiment_name: rental-ranking
+description: >-
+  Two-step preprocessing pipeline. Step 1 anonymises, types and concatenates the three raw city
+  snapshots into the processed layer; step 2 builds the label, filters, imputes price, grades, and
+  assembles the 44,684 x 66 feature table sorted into 393 query groups. Demonstration of the
+  multi-step cloud workflow; the local build is the real path and reproduces this byte-for-byte.
+
+settings:
+  default_compute: azureml:cpu-cluster
+
+inputs:
+  # The anonymisation salt, supplied at submit time and never committed. Empty by default so a
+  # forgotten --set fails in the first second instead of building a dataset under a wrong salt.
+  anon_salt:
+    type: string
+    default: ""
+
+  # The registered raw assets, at NAMED versions rather than @latest: this pipeline's whole claim
+  # is that it reproduces a specific local artifact, and @latest would let that quietly drift.
+  raw_thessaloniki:
+    type: uri_folder
+    path: azureml:raw-thessaloniki:2026.06.29
+    mode: ro_mount
+  raw_athens:
+    type: uri_folder
+    path: azureml:raw-athens:2026.06.28
+    mode: ro_mount
+  raw_crete:
+    type: uri_folder
+    path: azureml:raw-crete:2026.06.29
+    mode: ro_mount
+
+outputs:
+  processed:
+    type: uri_folder
+  features:
+    type: uri_folder
+
+jobs:
+
+  # ---------------------------------------------------------------------------------------
+  # Step 1 — raw -> processed.  The ONLY step that needs the salt: it is where hashing happens.
+  # ---------------------------------------------------------------------------------------
+  build_processed:
+    type: command
+    display_name: build processed layer
+    code: ../src
+    environment: azureml:rental-ranking-train@latest
+
+    inputs:
+      anon_salt: ${{parent.inputs.anon_salt}}
+      raw_thessaloniki: ${{parent.inputs.raw_thessaloniki}}
+      raw_athens: ${{parent.inputs.raw_athens}}
+      raw_crete: ${{parent.inputs.raw_crete}}
+    outputs:
+      processed: ${{parent.outputs.processed}}
+
+    # `data/build.py` has no CLI: it writes to paths derived from PROJECT_ROOT, which
+    # `data/paths.py` resolves from $RENTAL_RANKING_ROOT when set. So the step assembles the tree
+    # the code expects and symlinks the mounted inputs/outputs into it. The raw layout must be
+    # data/raw/<city>/<as_of>/ because that is what `io.raw_path` builds.
+    command: >-
+      export ANON_SALT=${{inputs.anon_salt}} &&
+      echo "ANON_SALT length ${#ANON_SALT}, sha256 prefix $(printf '%s' "$ANON_SALT" | sha256sum | cut -c1-16)" &&
+      test -n "$ANON_SALT" &&
+      test "${ANON_SALT#*\{}" = "$ANON_SALT" &&
+      mkdir -p work/data/raw/thessaloniki work/data/raw/athens work/data/raw/crete &&
+      ln -sfn ${{inputs.raw_thessaloniki}} work/data/raw/thessaloniki/2026-06-29 &&
+      ln -sfn ${{inputs.raw_athens}} work/data/raw/athens/2026-06-28 &&
+      ln -sfn ${{inputs.raw_crete}} work/data/raw/crete/2026-06-29 &&
+      ln -sfn ${{outputs.processed}} work/data/processed &&
+      export RENTAL_RANKING_ROOT=$PWD/work &&
+      python -m rental_ranking.data.build &&
+      echo "--- sha256, compare against your local data/processed/ ---" &&
+      sha256sum work/data/processed/*.parquet
+
+  # ---------------------------------------------------------------------------------------
+  # Step 2 — processed -> feature table.  No salt: it reads ids that are already hashed.
+  # ---------------------------------------------------------------------------------------
+  build_features:
+    type: command
+    display_name: build feature table
+    code: ../src
+    environment: azureml:rental-ranking-train@latest
+
+    inputs:
+      # This is the edge that makes it a pipeline rather than two jobs: step 2 consumes step 1's
+      # output, so Azure ML orders them and draws the dependency in the DAG.
+      processed: ${{parent.jobs.build_processed.outputs.processed}}
+    outputs:
+      features: ${{parent.outputs.features}}
+
+    command: >-
+      mkdir -p work/data &&
+      ln -sfn ${{inputs.processed}} work/data/processed &&
+      ln -sfn ${{outputs.features}} work/data/features &&
+      export RENTAL_RANKING_ROOT=$PWD/work &&
+      python -m rental_ranking.features.build &&
+      echo "--- sha256, compare against your local data/features/ ---" &&
+      sha256sum work/data/features/feature_table.parquet

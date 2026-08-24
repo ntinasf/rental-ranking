@@ -107,11 +107,19 @@ version.
 `pipelines/train_job.yml` takes `azureml:features:2026.08.17` as its input — a named version, not
 `@latest`, so a re-registration cannot silently change what a recorded run was trained on.
 
-**Why only these two.** The processed parquets stay local and are deliberately *not* registered:
-they are a reproducible intermediate — raw plus `data/build.py` reproduces them exactly — and
-nothing in the cloud consumes them, because preprocessing runs locally and the training job takes
-the feature table. Registering them would add a third thing to version and keep in step for no
-demonstration value.
+**Why only these two.** The processed parquets are deliberately *not* registered: they are a
+reproducible intermediate — raw plus `data/build.py` reproduces them exactly, verified
+byte-for-byte on 2026-08-22 — so registering them would add a third thing to version and keep in
+step for no traceability gain.
+
+*Amended 2026-08-22.* This paragraph used to give a second reason: that "nothing in the cloud
+consumes them, because preprocessing runs locally". That half is now **false** —
+`pipelines/preprocess_pipeline.yml` consumes the raw assets and produces both layers in the
+cloud. The conclusion is unchanged and the surviving reason is the one that was always doing the
+work: the processed layer is derivable, and a derivable artifact earns a version only if
+something needs to *name* it. The pipeline's outputs are therefore pipeline outputs, not new
+assets. Preprocessing still runs locally as the real path; the pipeline is a workflow
+demonstration, and the local build remains canonical.
 
 **Versioning, by layer.** Raw is versioned by **snapshot date**, because that is the only thing
 that distinguishes one raw pull from another and it never changes once downloaded. The feature
@@ -129,6 +137,258 @@ tag. Only one of those breaks the chain silently.
 A local `path` uploads to the workspace's default Blob container (`workspaceblobstore`) and
 registers in one step — ~300 MB for the three raw folders (32/132/136 MB), 3 MB for the feature
 table. The container is private; PII in raw is storage, not publication.
+
+## The preprocessing pipeline job (2026-08-22)
+
+The single-step `train_job.yml` demonstrates a versioned asset going in and an MLflow run coming
+out. What it cannot show is a **multi-step pipeline**: two components with an intermediate
+flowing between them, which is what most people mean by "an Azure ML pipeline". That is the only
+reason `pipelines/preprocess_pipeline.yml` exists. **The local build remains the real path.**
+
+**It reuses `rental-ranking-train` — no new environment.** The build path imports exactly
+`pandas`, `numpy`, `scipy`, `pyarrow` and `dotenv` (traced by importing both build modules and
+diffing `sys.modules`). The first four are pinned directly; `python-dotenv` arrives through
+`mlflow==3.13.0 -> mlflow-skinny==3.13.0 -> python-dotenv<2,>=0.19.0`, verified against PyPI
+rather than assumed. So the already-built image is sufficient and the pipeline starts without an
+image build.
+
+**Unlike the training job, this one is expected to reproduce its local counterpart.** Verified
+locally 2026-08-22 by rebuilding into an isolated root and comparing SHA-256 — all four artifacts
+byte-identical, twice. The post-run check is therefore `shasum`, not eyeballing:
+
+| artifact | sha256 |
+| --- | --- |
+| `processed/listings.parquet` | `870af111eb0e260c3f628284c3566f9d2f5c5f5fc265a1bc9c50c4a80b2d7033` |
+| `processed/calendar.parquet` | `e4aa159e18aad04184d8d12fd144ae2c27f006aadde876ba37051a5a0caf29cc` |
+| `processed/reviews.parquet` | `23149de36435a5c3a48c28decf692e9b1b337302db6d54c0ee724a076086543e` |
+| `features/feature_table.parquet` | `8c74b28408544aee20ba7c47bc1485a916889321c20c8dcb4d13a0e3c70db7e0` |
+
+### Result of the run — 2026-08-22
+
+![The preprocessing pipeline graph](screenshots/preprocess_pipeline_dag.png)
+
+**Job `preprocess-and-features` completed.** The salt arrived intact: step 1's first log line read
+`ANON_SALT length 32, sha256 prefix [redacted]`, matching the local `.env` exactly. That
+also closes the earlier fingerprint mismatch — it was the `read -rs` capture in the terminal, not
+the vault and not the paste.
+
+**Three of the four artifacts are byte-identical to the local build**, including
+`feature_table.parquet`. **`listings.parquet` differs.**
+
+The likely cause, and the reason it was not chased further: `listings` is the **only** one of the
+three processed files carrying a nested column — `amenities`, a `list<string>`. Calendar and
+reviews are flat primitives and both matched. Arrow's physical encoding of nested types (offset
+buffers, child-array chunking) can differ between the local ARM macOS build and the cloud x86
+Linux one while the logical content is unchanged.
+
+**What the byte-identical feature table establishes.** It is built from `listings` through label
+construction, filters, price imputation, grading, grouping and assembly. A content difference in
+any column feeding a feature would have propagated into it. So the discrepancy is confined to
+physical encoding and/or to columns no feature reads — not to the data the project uses.
+
+**What that does NOT establish**, stated so no one reads more into it than is there: nobody has
+compared the two `listings.parquet` files column by column, so "identical content" is an
+inference from the downstream hash, not a measurement. The honest claim is **"the feature table
+the model trains on reproduces exactly; the intermediate listings file differs in physical
+encoding"** — not "the pipeline reproduces byte-for-byte". Settling it would take one download
+and a `DataFrame.equals`, and is left undone deliberately.
+
+### A note on the salt's visibility
+
+Confirmed in practice: the pipeline's `anon_salt` input **is visible in the job's inputs** in
+Studio. That is the exposure this document predicted for the environment-variable approach and it
+applies equally to a pipeline parameter — the value is job metadata either way.
+
+**Do not rotate the salt in response.** Hashing is `sha256(f"{salt}:{value}")[:16]`, so a new salt
+changes every listing id and would invalidate the registered `features` asset and the committed
+`docs/endpoint_demo/` evidence. The exposure is bounded by workspace access, the salt protects
+linkage to ids that are public anyway, and deleting the workspace removes it. Rotating would cost
+real artifacts to fix a risk that teardown already closes.
+
+Measured peak memory, so the instance size is a decision rather than a hope: **step 1 4.4 GiB /
+14 s, step 2 2.1 GiB / 3 s** against `Standard_F4s_v2`'s 8 GiB. Comfortable, and the reason the
+existing cluster needs no resizing.
+
+### The salt, and why it is the one input that can break the run
+
+Hashing is `sha256(f"{salt}:{value}")[:16]`, so **a different salt produces entirely different
+listing ids** — a processed layer that looks perfectly healthy and matches nothing: not the
+registered `features:2026.08.17` asset, not the endpoint demo captures, not the hashes above.
+Nothing downstream would fail loudly. This is why the salt is handled deliberately rather than
+pasted into the YAML.
+
+`ANON_SALT: ""` is declared **empty on purpose** in the pipeline YAML. `anonymize._resolve_salt`
+raises on a blank salt, so a forgotten `--set` fails in the first second instead of building a
+whole dataset under the wrong one.
+
+### Put the salt in the workspace Key Vault — portal
+
+Every AML workspace is created with a Key Vault attached; this uses that one rather than adding a
+resource. Storing the salt there makes the vault the system of record instead of a `.env` file
+that exists on exactly one laptop.
+
+**1 — Find the vault.** Portal → search `nf-rental-ranking-ws` → the workspace's **Overview**
+page → in the **Essentials** panel, click the **Key vault** link. The name is auto-generated at
+workspace creation (something like `nfrentalrankingws0123456789`), which is why it is worth
+following the link rather than guessing it.
+
+**2 — Check which permission model the vault uses.** In the vault's left nav:
+**Settings → Access configuration**. It reads either *Azure role-based access control* or
+*Vault access policy*. Do whichever of 3a / 3b matches — doing the wrong one appears to succeed
+and still leaves you unable to write the secret.
+
+**3a — RBAC vaults.** Vault → **Access control (IAM)** → **+ Add** → **Add role assignment**.
+
+- *Role* tab: search **Key Vault Secrets Officer**. Take that one, not *Key Vault Secrets User* —
+  User can only read, and you need to write.
+- *Members* tab: **Assign access to** = *User, group, or service principal* →
+  **+ Select members** → your own account.
+- **Review + assign**.
+
+Role assignments take a minute or two to propagate. If step 4 shows a permissions error, wait and
+refresh rather than assuming the assignment failed.
+
+**3b — Access-policy vaults.** Vault → **Access policies** → **+ Create**.
+
+- *Permissions* tab: under **Secret permissions** tick **Get**, **List**, **Set**.
+- *Principal* tab: search and select your own account.
+- *Application* tab: skip it.
+- **Review + create**.
+
+Leave any existing policy alone — the workspace's own managed identity has one, and removing it
+breaks the workspace.
+
+**4 — Create the secret.** Vault → **Objects → Secrets** → **+ Generate/Import**.
+
+| field | value |
+| --- | --- |
+| Upload options | **Manual** |
+| Name | `anon-salt` |
+| Secret value | the value from `.env`, everything after `ANON_SALT=` |
+| Content type | optional — `anonymisation salt (hex)` is a useful label |
+| Activation / expiration date | leave unset |
+| Enabled | Yes |
+
+Then **Create**.
+
+> **Paste the value only — no `ANON_SALT=` prefix and no surrounding quotes.** Checked on
+> 2026-08-22: this repo's `.env` stores the salt **unquoted**, 32 characters, so the value after
+> the `=` is exactly what belongs in the box. A stray quote or newline produces a *different*
+> salt, and a different salt produces a full dataset whose listing ids match nothing — with no
+> error anywhere. Verify before submitting using the fingerprint check below.
+
+**5 — Verify.** Secrets → `anon-salt` → click the current version → **Show Secret Value**. It
+should match `.env` exactly.
+
+<details>
+<summary>CLI equivalent, if you prefer it later</summary>
+
+```sh
+KV=$(az ml workspace show -n nf-rental-ranking-ws -g nf-rental-ranking \
+       --query key_vault -o tsv | awk -F/ '{print $NF}')
+
+az role assignment create --role "Key Vault Secrets Officer" \
+  --assignee "$(az ad signed-in-user show --query id -o tsv)" \
+  --scope "$(az keyvault show -n "$KV" --query id -o tsv)"
+
+SALT=$(grep -m1 '^ANON_SALT=' .env | cut -d= -f2- | tr -d "\"'")
+az keyvault secret set --vault-name "$KV" --name anon-salt --value "$SALT" --output none
+unset SALT
+```
+
+</details>
+
+### Submit the pipeline
+
+The salt is injected as an environment variable scoped to **step 1 only** — step 2 reads ids that
+are already hashed and never needs it.
+
+Copy the value from the portal (Secrets → `anon-salt` → **Show Secret Value** → copy), then:
+
+```sh
+# `read -rs` does not echo, and the value never enters shell history.
+read -rs ANON_SALT
+# ...paste, press Enter...
+
+# Confirm you pasted the right thing WITHOUT printing it. Expect: [redacted]
+printf '%s' "$ANON_SALT" | shasum -a 256 | cut -c1-16
+
+az ml job create -f pipelines/preprocess_pipeline.yml \
+  --set inputs.anon_salt="$ANON_SALT" \
+  -g nf-rental-ranking -w nf-rental-ranking-ws
+
+unset ANON_SALT
+```
+
+> **The first attempt used `--set jobs.build_processed.environment_variables.ANON_SALT=...`
+> and the value never reached the container** (2026-08-22). `--set` is accepted on nested
+> `jobs.*` properties and reports no error, but the override did not survive into the step's
+> runtime environment. The salt now travels as a **pipeline-level input** (`inputs.anon_salt`),
+> which is the parameterisation Azure ML actually supports — the service substitutes it into the
+> step's command rather than the CLI patching a nested object.
+>
+> Step 1 now also prints, before doing any work:
+>
+> ```
+> ANON_SALT length 32, sha256 prefix [redacted]
+> ```
+>
+> and refuses to continue on an empty value **or** on an unsubstituted `${{...}}` placeholder —
+> the second being the dangerous one, since it is non-empty and would otherwise build a complete
+> dataset under a salt that is literally the placeholder text. The fingerprint is a one-way hash,
+> so it is safe in a job log and lets you confirm the *right* salt arrived, not merely some salt.
+
+The fingerprint line is the guard that makes the whole arrangement safe: a mistyped or
+quote-wrapped paste is caught in one second, instead of surfacing as a dataset whose ids match
+nothing and whose failure mode is silence. On Linux the command is `sha256sum` rather than
+`shasum -a 256`.
+
+If you would rather pull it from the vault than copy it by hand:
+
+```sh
+KV=$(az ml workspace show -n nf-rental-ranking-ws -g nf-rental-ranking \
+       --query key_vault -o tsv | awk -F/ '{print $NF}')
+ANON_SALT=$(az keyvault secret show --vault-name "$KV" --name anon-salt --query value -o tsv)
+```
+
+**Be precise about what this achieves.** The vault becomes the system of record and the secret
+stays out of the repo and the job YAML — both real. But the value is injected as a job
+environment variable, so it is visible to anyone with workspace access in the job's properties.
+For a single-owner workspace that is torn down afterwards, that is proportionate.
+
+The stricter alternative, worth knowing as the production answer: give the compute cluster a
+**managed identity**, grant *that* identity `get` on the secret, and have the job read the vault
+at runtime via `azure-identity` + `azure-keyvault-secrets` — so the secret never leaves Azure and
+never appears in job metadata. It costs an identity, an RBAC grant, two extra packages in the
+environment, and a shim that sets `os.environ["ANON_SALT"]` before calling `main()`, because
+`build.py` reads the variable rather than a vault. Not taken here: that is real setup for a job
+that runs once before the workspace is deleted, and the exposure it removes is exposure to the
+workspace's only user.
+
+### After the run
+
+```sh
+# The DAG screenshot is the deliverable; the hash check is the evidence.
+az ml job show -n <run-name> -g nf-rental-ranking -w nf-rental-ranking-ws --query status -o tsv
+```
+
+Both steps print `sha256sum` of what they wrote — compare against the table above. The
+intermediate and the feature table land in the workspace blob store as pipeline outputs and are
+deliberately **not** registered as new data assets: `features:2026.08.17` already exists and was
+built from the identical bytes, and registering a second copy would add a third thing to version
+and keep in step for no demonstration value.
+
+Teardown is unchanged and still applies — the cluster idles at zero, but see the standing rule.
+
+**One teardown wrinkle the Key Vault adds.** Vaults have **soft delete** enabled and it cannot be
+turned off. Deleting the resource group therefore does not remove the vault outright: it goes into
+a soft-deleted state for the retention period (90 days by default). That costs nothing, but the
+**name stays reserved**, so recreating a workspace later can collide with it. To clear it
+immediately: Portal → **Key vaults** → **Manage deleted vaults** → select the region
+(*italynorth*) → select the vault → **Purge**. Purge is blocked if *purge protection* was enabled
+on the vault; AML enables soft delete but generally leaves purge protection off, so this normally
+works. Nothing else in this project needs the vault to survive — the salt's system of record
+returns to `.env` once the workspace is gone.
 
 ## Standing rule
 
@@ -428,6 +688,7 @@ Screenshots kept in `docs/screenshots/`:
 | `endpoint_container_logs.png` | `POST /score 200` with latencies, from the deployment log |
 | `train_job_overview.png` | the training run's Overview tab — the reproducibility claim in one frame: data asset `features:2026.08.17`, registered environment `rental-ranking-train:2026.08.18`, git branch and commit, and the `protocol: sealed fold 0 of 5` tag |
 | `train_job_metrics.png` | the same run's logged metrics |
+| `preprocess_pipeline_dag.png` | the preprocessing pipeline's graph: three raw data assets fanning into `build_processed`, the `processed` intermediate flowing into `build_features`, both outputs registered. The one thing the single-step training job cannot show |
 
 The Overview shot also exposes a small logging gap worth fixing before the next cloud run: the
 MLflow tag reads `git_commit : unknown` while Azure's own Git field carries the real SHA. The job

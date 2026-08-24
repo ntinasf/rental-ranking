@@ -1,12 +1,25 @@
 """Scoring script for the managed online endpoint: a candidate set in, a ranked list out.
 
 **A ranker's endpoint is not a predictor's endpoint.** A regression model scores rows
-independently and the caller may do what it likes with the numbers. A ranker's output is only
-meaningful *within one query*: the score for a listing has no absolute interpretation, and
-comparing scores across two different searches is meaningless. So the contract here takes a
-**candidate set** — the listings competing in one search — and returns them **ordered**, with
-their scores attached but the ordering already applied. Returning unordered scores would invite
-exactly the cross-query comparison the model cannot support.
+independently and the caller may do what it likes with the numbers. A ranker's score is
+**uncalibrated**: it is not a probability, its scale is arbitrary, and no threshold on it means
+anything. So the contract here takes a **candidate set** — the listings competing in one search —
+and returns them **ordered**, with their scores attached but the ordering already applied.
+Returning bare numbers would invite a caller to threshold them, or to read a gap between two of
+them as a magnitude, and neither is supported.
+
+*Corrected 2026-08-22.* This docstring previously went further and said that "comparing scores
+across two different searches is meaningless" — the ordering contract was right, the reason given
+for it was not. **Calibration and comparability are different properties**, and ordering two
+listings needs only a monotone common function, not a calibrated one. The booster takes no
+query-group input, so there is no per-group parameter that could differ between searches; the
+lambdarank objective merely leaves cross-group ordering *unconstrained*, which is not the same as
+destroying it. Measured out-of-fold, ordering listings from different neighbourhoods is
+indistinguishable from ordering listings inside one group — paired difference **-0.0016**, 95 %
+CI [-0.0122, +0.0092] over 54 cells (``evaluate/comparability.py``). A caller may therefore hand
+this endpoint a **broad candidate set spanning neighbourhoods** and trust the ordering, within
+one city and room type. Across cities or room types the question is not merely unmeasured but
+undefined here, since the grades come from different partitions.
 
 **Input** (one query)::
 

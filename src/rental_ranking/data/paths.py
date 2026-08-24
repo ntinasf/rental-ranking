@@ -49,3 +49,8 @@ SERVING_BUNDLE_DIR: Path = TRAIN_DIR / "serving_bundle"
 #: endpoint itself is deleted the moment the screenshots are taken (BUILD_GUIDE gotcha #6), so
 #: these files are all that survives it.
 ENDPOINT_DEMO_DIR: Path = PROJECT_ROOT / "docs" / "endpoint_demo"
+
+#: Report figures — the charts and extracted notebook plots that ``docs/report.md`` embeds.
+#: **Committed**, like ``ENDPOINT_DEMO_DIR`` and unlike everything under ``DATA_DIR``, because
+#: the report is a deliverable and a deliverable cannot depend on a gitignored directory.
+FIGURES_DIR: Path = PROJECT_ROOT / "docs" / "figures"

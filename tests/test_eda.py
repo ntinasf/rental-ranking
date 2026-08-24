@@ -199,3 +199,70 @@ def test_group_composition_refuses_a_fourth_breakdown_level() -> None:
     breakdown = pd.Series(["w", "x", "y", "z"] * 2, name="cohort")
     with pytest.raises(ValueError, match="palette cap"):
         eda.plot_group_composition(category, breakdown)
+
+
+def test_plot_scores_against_floor_reports_range_share() -> None:
+    fig, stats = eda.plot_scores_against_floor(
+        {"model": 0.75, "baseline": 0.65},
+        floor=0.55,
+        intervals={"model": (0.71, 0.79)},
+        highlight="model",
+    )
+    assert isinstance(fig, matplotlib.figure.Figure)
+    assert stats["floor"] == 0.55
+    assert stats["ceiling"] == 1.0
+    # The whole point of the chart: the share of the range above chance, not of 0-to-1.
+    # range_share is rounded to 4 dp, the precision the report quotes it at.
+    assert stats["rankers"]["model"]["range_share"] == pytest.approx(0.2 / 0.45, abs=1e-4)
+    assert stats["rankers"]["baseline"]["range_share"] == pytest.approx(0.1 / 0.45, abs=1e-4)
+    plt.close(fig)
+
+
+def test_plot_scores_against_floor_honours_a_ceiling_below_one() -> None:
+    """A cohort's reach is capped by how many of it can fit on a first screen at all."""
+    fig, stats = eda.plot_scores_against_floor(
+        {"model": 0.058}, floor=0.096, ceiling=0.172, highlight="model"
+    )
+    assert stats["ceiling"] == 0.172
+    # Below the floor, so the share is negative — worse than chance, and it must read that way.
+    assert stats["rankers"]["model"]["range_share"] < 0
+    plt.close(fig)
+
+
+def test_plot_scores_against_floor_rejects_a_floor_above_the_ceiling() -> None:
+    with pytest.raises(ValueError, match="must sit below"):
+        eda.plot_scores_against_floor({"model": 0.5}, floor=0.9, ceiling=0.8)
+
+
+def test_plot_scores_against_floor_rejects_empty_scores() -> None:
+    with pytest.raises(ValueError, match="No scores"):
+        eda.plot_scores_against_floor({}, floor=0.5)
+
+
+def test_plot_dose_response_returns_per_series_range_and_reference() -> None:
+    fig, stats = eda.plot_dose_response(
+        [1, 2, 3, 5],
+        {"grade": [2.78, 2.99, 3.03, 3.11], "cold share": [0.091, 0.067, 0.049, 0.048]},
+        reference={"grade": 3.09, "cold share": 0.048},
+    )
+    assert stats["dose"] == ["1", "2", "3", "5"]
+    assert stats["series"]["grade"]["reference"] == 3.09
+    assert stats["series"]["cold share"]["range"] == pytest.approx(0.043)
+    plt.close(fig)
+
+
+def test_plot_dose_response_allows_one_series_without_a_reference() -> None:
+    fig, stats = eda.plot_dose_response([1, 2, 3], {"grade": [1.0, 2.0, 3.0]})
+    assert stats["series"]["grade"]["reference"] is None
+    plt.close(fig)
+
+
+def test_plot_dose_response_caps_at_two_series() -> None:
+    """A third unit has no axis left to be honest on."""
+    with pytest.raises(ValueError, match="two-axis cap"):
+        eda.plot_dose_response([1, 2], {"a": [1, 2], "b": [1, 2], "c": [1, 2]})
+
+
+def test_plot_dose_response_rejects_a_length_mismatch() -> None:
+    with pytest.raises(ValueError, match="values for"):
+        eda.plot_dose_response([1, 2, 3], {"grade": [1.0, 2.0]})

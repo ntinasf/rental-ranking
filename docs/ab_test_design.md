@@ -1,10 +1,10 @@
-# Experiment design — system-chosen geography in large-area search
+# Experiment design: system-chosen geography in large-area search
 
 | | |
 |---|---|
-| **Status** | Design. **Not run.** No live traffic exists for this system. |
-| **Surface** | Search results, large-area (no neighbourhood specified) |
-| **Change** | Retrieval narrows to *k* system-chosen neighbourhoods before ranking (two arms: *k* = 2, *k* = 3) |
+| **Status** | Design only. No traffic data exists for this system. |
+| **Surface** | Search resultsfor large-areas (no neighbourhood specified) |
+| **Change** | The candidate set narrows to *k* system-chosen neighbourhoods before ranking (two arms: *k* = 2, *k* = 3) |
 | **Primary metric** | Booking-intent rate per session |
 | **Proposed duration** | 4 weeks, fixed horizon |
 
@@ -15,12 +15,12 @@
 Guests searching a whole city rather than a neighbourhood get a candidate set an order of
 magnitude larger than a scoped search, and a ranker with no signal about *where* they want to stay
 must order it on listing quality alone. This experiment tests whether narrowing that set to a small
-number of system-chosen neighbourhoods, before ranking, produces a better first screen than ranking
-the whole city — at two doses, *k* = 2 and *k* = 3, so a null at one dose cannot be mistaken for a
+number *k* of system-chosen neighbourhoods, before ranking, produces a better first screen than ranking
+the whole city. Two variants will be tested, *k* = 2 and *k* = 3, so a null at one dose cannot be mistaken for a
 null on the idea.
 
 The hypothesis is falsifiable, the ranking model is identical in every arm, and offline simulation
-has already established the cost side of the trade — narrowing is quality-negative below three
+has already established the cost side of the trade: narrowing is quality-negative below three
 neighbourhoods and quality-neutral at five (Appendix A). What offline work **cannot** establish is
 the benefit side: whether the narrowed set matches where the guest actually wanted to go. That
 question needs users, and it is the reason to run the test.
@@ -29,22 +29,18 @@ question needs users, and it is the reason to run the test.
 
 ## 2. Background
 
-The system serves search in two stages. **Retrieval** assembles a candidate set from the catalogue;
-**ranking** orders it with a LambdaMART model over 61 listing features and returns the top *K*.
-The ranker is evaluated offline at NDCG@10 = 0.7530 [0.7148, 0.7903] on held-out data, against
-0.6429 for a price-and-rating heuristic and a 0.5519 random floor.
+The system has **one learned stage**. The candidate set is assembled by a *filter* — the query-group
+key, plus the geographic narrowing policy this experiment puts under test. Then our LambdaMART model
+over 61 listing features orders it and returns the top *N*. The ranker was evaluated offline at
+NDCG@10 = 0.7530 [0.7148, 0.7903] on held-out data, against 0.6429 for a price-and-rating heuristic
+and a 0.5519 random floor.
 
 The ranker holds no information about the guest. It has no dates, no party history, no prior
 sessions, no notion of destination preference. It orders listings by expected demand within
 whatever candidate set it is handed. For a search that already names a neighbourhood this is
-enough — the guest has supplied the geography. For a large-area search it is not, because the
+enough, as the guest has supplied the geography. For a large-area search it is not, because the
 system must decide *which parts of the city to show* and the ranker has no basis for that decision
 beyond listing quality.
-
-Ranking a whole city is not a compute problem. The full catalogue of 44,684 listings scores in
-**87 ms**; 23,441 in 48 ms. The constraint is informational, not computational: without a view on
-destination, a city-wide ranking concentrates the first screen wherever the model's features score
-highest, which need not be where the guest wants to be.
 
 ---
 
@@ -63,12 +59,12 @@ Directional secondary prediction, registered in advance:
 > city. The offline prediction is **differential across the arms**: an increase at *k* = 2
 > (0.067 vs 0.048, roughly +40 %) and no change at *k* = 3 (0.049 vs 0.048, Appendix A).
 > Observing the increase in one arm and its absence in the other, on the same traffic in the same
-> window, is a sharper test than either prediction alone.
+> window is a sharper test than either prediction alone.
 
 H₂ is registered because it is measurable, was predicted before the test, and runs *counter* to the
 usual expectation that a change favouring established listings will worsen cold-start exposure. An
 increase in the *k* = 3 arm would mean live dynamics — reviews earned during the window compounding
-exposure — exceed what the static simulation captures; that would be a finding, not a confirmation.
+exposure — exceed what the static simulation captures.
 
 ---
 
@@ -76,31 +72,33 @@ exposure — exceed what the static simulation captures; that would be a finding
 
 ### 4.1 Scope
 
-**Eligible:** searches specifying a city, a room type and a party size, and **not** a
+**Eligible:** searches specifying a city, a room type and a party size, but **not** a
 neighbourhood. Scoped searches are unaffected and unassigned.
 
 ### 4.2 Arms
 
-| | retrieval | ranking |
+![How traffic is split: eligibility, assignment, the three candidate-set policies, the one shared ranker, and the two comparisons](figures/ab_traffic_split.png)
+
+| | candidate set | ranking |
 |---|---|---|
 | **Control** | the whole eligible area | unchanged model, top 10 shown |
 | **Treatment *k* = 2** | the 2 highest-prior neighbourhoods only | unchanged model, top 10 shown |
 | **Treatment *k* = 3** | the 3 highest-prior neighbourhoods only | unchanged model, top 10 shown |
 
 **The ranking model is byte-identical in all three arms.** Only the candidate set differs, which is
-what makes any measured effect attributable to the retrieval policy rather than to the model.
+what makes any measured effect attributable to the narrowing policy rather than to the model.
 
 ### 4.3 The demand prior
 
 A score per neighbourhood: mean realised demand over a trailing window. It is a **prior over
-geographies**, never a listing feature — no listing sees it, and it enters only as a filter on the
+geographies** and it enters only as a filter on the
 candidate set. A neighbourhood with no history falls back to its city's mean rather than being
 excluded, so a thin neighbourhood is treated as average instead of vanishing from every search.
 
 Two guards on the score, both declared before launch. The mean is **shrunk toward the city mean**
 in proportion to the neighbourhood's inventory — the same empirical-Bayes form as the ranker's
 `rating_shrunk` — so a dozen hot listings cannot buy a top-*k* slot on one noisy month. And a
-neighbourhood qualifies for the top *k* only above a **minimum-inventory floor**: a retrieval
+neighbourhood qualifies for the top *k* only above a **minimum-inventory floor**: a narrowing
 policy keeping two neighbourhoods must keep enough eligible listings to fill a first screen many
 times over, or the narrowed candidate set is a short list wearing a policy.
 
@@ -157,7 +155,7 @@ randomised. The system changes who is *asked*, not who *accepts*.
 | top-3 click-through | leading indicator | — |
 
 Note the third: the treatment **reduces** per-screen geographic diversity by design, since the
-screen cannot show more neighbourhoods than retrieval kept. It is reported for interpretation, not
+screen cannot show more neighbourhoods than the narrowing kept. It is reported for interpretation, not
 as a guardrail — a guardrail on a quantity the treatment necessarily moves would fail every time.
 
 ### 5.3 Guardrails
@@ -305,7 +303,7 @@ result.
 | result | guardrails | decision |
 |---|---|---|
 | at least one arm significantly up | held in that arm | **Ship the winning arm** — the larger point estimate when both clear, *k* = 3 when their intervals make them indistinguishable, as the quality-safer dose. Expect the shipped gain to undershoot the measured one (§6). |
-| an arm significantly up | ship-blocking guardrail degraded in that arm | **Do not ship that arm.** Neighbourhood starvation and cold-start burial both compound over time, and a first-screen gain does not pay for either. If the other arm is up with its guardrails held, ship it; otherwise re-run with an exposure floor in retrieval. |
+| an arm significantly up | ship-blocking guardrail degraded in that arm | **Do not ship that arm.** Neighbourhood starvation and cold-start burial both compound over time, and a first-screen gain does not pay for either. If the other arm is up with its guardrails held, ship it; otherwise re-run with an exposure floor in the narrowing policy. |
 | neither arm significant | all held | **Do not ship**, and record both intervals. Interference bias scales with the true effect (§6), so tight nulls centred on zero are close to unbiased and are strong evidence the policy does not pay; wide ones mean the test was underpowered and are reported as such rather than as evidence of no effect. |
 | *k* = 2 significantly down, *k* = 3 not | any | The quality cost bites before the destination benefit at two neighbourhoods. *k* = 3's own row decides shipping; the ordering across doses is itself the dose–response finding. |
 | *k* = 3 significantly down | any | **Abandon.** At the quality-neutral dose a decrease means system-chosen geography is worse than letting the guest browse the whole city — the narrowing hypothesis is falsified — and *k* = 5 is already indistinguishable from control, so there is no parameter left to search. |
@@ -317,7 +315,7 @@ result.
 | risk | detection | mitigation |
 |---|---|---|
 | interference inflates the estimate (§6) | control's own metric drifts against its pre-period | treat the estimate as an upper bound; switchback follow-up |
-| a co-occurring change to retrieval, ranking or the result card | change log reviewed at the analysis date | freeze the surface for the window |
+| a co-occurring change to the narrowing policy, the ranking model or the result card | change log reviewed at the analysis date | freeze the surface for the window |
 | the demand prior goes stale mid-window | prior recomputed and compared, not applied | fit once, before launch, and hold it fixed |
 | eligible traffic below assumption | monitored from day one | extend the horizon or restate the MDE; do not stop early on a favourable reading |
 | sample ratio mismatch | daily | halt; nothing downstream is interpretable |
@@ -357,7 +355,7 @@ registered. The gain decays fast — by *k* = 3 it is gone (0.049 vs 0.048) — 
 prediction is differential: an increase in the *k* = 2 arm and none in the *k* = 3 arm.
 
 **Narrowing reduces per-screen geographic diversity**, necessarily — the screen cannot show more
-neighbourhoods than retrieval kept. Any intuition that geographic narrowing increases variety is
+neighbourhoods than the narrowing kept. Any intuition that geographic narrowing increases variety is
 backwards, and §5.2 treats the metric descriptively for that reason.
 
 ### Why the offline result cannot settle the question
@@ -392,7 +390,7 @@ argument for the cold-start guardrail, and part of the motivation for narrowing 
 
 **No NDCG appears in this appendix, and the analysis module exposes no function that could produce
 one.** NDCG normalises by the candidate set, so it changes meaning the moment the set changes and
-cannot compare two retrieval policies. First-screen composition is unnormalised — ten listings are
+cannot compare two narrowing policies. First-screen composition is unnormalised — ten listings are
 ten listings — which is precisely what makes it comparable.
 
 ---

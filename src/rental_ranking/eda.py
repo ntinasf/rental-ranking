@@ -41,6 +41,8 @@ __all__ = [
     "plot_binned_relationship",
     "plot_discrete_distribution",
     "plot_group_composition",
+    "plot_scores_against_floor",
+    "plot_dose_response",
 ]
 
 #: Categorical series colours, assigned in fixed order and never cycled. Validated for
@@ -1025,5 +1027,248 @@ def plot_group_composition(
     )
     if title:
         fig.suptitle(title, fontsize=12)
+
+    return fig, stats
+
+
+def plot_scores_against_floor(
+    scores: dict[str, float],
+    floor: float,
+    intervals: dict[str, tuple[float, float]] | None = None,
+    highlight: str | None = None,
+    figsize: tuple[float, float] = (9, 3.4),
+    title: str | None = None,
+    xlabel: str = "score",
+    floor_label: str = "random floor",
+    ceiling: float = 1.0,
+) -> tuple[plt.Figure, dict]:
+    """Ranked scores as horizontal bars, read against the floor rather than against zero.
+
+    A ranking metric has no meaningful zero. NDCG@10 normalises within a candidate set, so a
+    shuffle of a ten-listing group scores 1.0 and a shuffle of a large one still scores well
+    above nothing — quoting 0.75 without saying what chance gets is the single easiest way to
+    misread one. The shaded band from zero to ``floor`` is unreachable in practice, so the eye
+    reads each bar against the range that was actually available.
+
+    ``ceiling`` exists for the same reason in the other direction: where a quantity is capped
+    below 1.0 — the share of a cohort that *can* reach a first screen, say — the attainable
+    maximum is drawn rather than assumed.
+
+    Args:
+        scores: Ranker name -> score, drawn top to bottom in the order given.
+        floor: The chance level for this slice. Shaded from zero and annotated.
+        intervals: Optional name -> (low, high), drawn as an error bar. Names absent from
+            ``scores`` are ignored; names present without an interval simply get none.
+        highlight: Name drawn in the emphasis colour — normally the model.
+        figsize: Figure size.
+        title: Plot title.
+        xlabel: X axis label.
+        floor_label: Legend text for the shaded band.
+        ceiling: The attainable maximum, drawn as a rule when below 1.0.
+
+    Returns:
+        (fig, stats) — stats holds the floor, the ceiling, and per ranker its score plus
+        ``range_share``, the fraction of the floor-to-ceiling range it covered, rounded to
+        4 dp. It goes negative for a ranker below chance, which is a real result and is not
+        clipped away.
+
+    Raises:
+        ValueError: If ``scores`` is empty, or ``floor`` is not below ``ceiling``.
+    """
+    if not scores:
+        raise ValueError("No scores to plot.")
+    if not floor < ceiling:
+        raise ValueError(f"floor {floor} must sit below ceiling {ceiling}.")
+
+    intervals = intervals or {}
+    names = list(scores)
+    positions = np.arange(len(names))[::-1]  # first name at the top
+
+    fig, ax = plt.subplots(figsize=figsize, constrained_layout=True)
+    stats: dict = {"floor": float(floor), "ceiling": float(ceiling), "rankers": {}}
+
+    for position, name in zip(positions, names, strict=True):
+        value = float(scores[name])
+        emphasised = name == highlight
+        ax.barh(
+            position,
+            value,
+            height=0.52,
+            color=_SERIES_COLORS[0] if emphasised else "#b8c4d1",
+            edgecolor="none",
+            zorder=3,
+        )
+        if name in intervals:
+            low, high = intervals[name]
+            ax.errorbar(
+                value,
+                position,
+                xerr=[[value - low], [high - value]],
+                fmt="none",
+                ecolor="#33414f" if emphasised else "#7b8896",
+                elinewidth=1.4,
+                capsize=4,
+                zorder=4,
+            )
+        # Past the interval, not past the bar: a label sitting on its own error bar is the
+        # one place this chart could be misread as a point estimate.
+        label_at = max(value, intervals[name][1]) if name in intervals else value
+        ax.annotate(
+            f"{value:.4f}".rstrip("0").rstrip("."),
+            xy=(label_at, position),
+            xytext=(9, 0),
+            textcoords="offset points",
+            va="center",
+            fontsize=10,
+            fontweight="bold" if emphasised else "normal",
+            color="#1c2733",
+            zorder=5,
+        )
+        stats["rankers"][name] = {
+            "score": value,
+            "range_share": round((value - floor) / (ceiling - floor), 4),
+        }
+
+    # The band the reader must not credit the ranker for.
+    ax.axvspan(
+        0, floor, color="#c9d2db", alpha=0.45, zorder=1, label=f"{floor_label} ({floor:.3f})"
+    )
+    ax.axvline(floor, color="#8a97a5", linewidth=1.1, zorder=2)
+    if ceiling < 1.0:
+        ax.axvline(ceiling, color="#33414f", linewidth=1.1, linestyle="--", zorder=2)
+        ax.annotate(
+            f"ceiling {ceiling:.3f}",
+            xy=(ceiling, positions.max()),
+            xytext=(4, 12),
+            textcoords="offset points",
+            fontsize=9,
+            color="#33414f",
+        )
+
+    ax.set_yticks(positions, names)
+    ax.set_xlim(0, max(ceiling, max(scores.values())) * 1.16)
+    ax.set_xlabel(xlabel)
+    if title:
+        ax.set_title(title)
+    ax.legend(frameon=False, loc="upper center", bbox_to_anchor=(0.5, -0.22), fontsize=9)
+    ax.grid(True, axis="x", alpha=0.25, linewidth=0.6)
+    ax.set_axisbelow(True)
+    ax.spines[["top", "right", "left"]].set_visible(False)
+
+    return fig, stats
+
+
+def plot_dose_response(
+    dose: Sequence,
+    series: dict[str, Sequence[float]],
+    reference: dict[str, float] | None = None,
+    figsize: tuple[float, float] = (10, 4.6),
+    title: str | None = None,
+    xlabel: str = "dose",
+    ylabels: Sequence[str] | None = None,
+) -> tuple[plt.Figure, dict]:
+    """One or two quantities against an ordered dose, each on its own axis.
+
+    For a policy knob where the thing gained and the thing paid for move in opposite
+    directions, and the question is where they cross. Two series get two y axes because they
+    are in different units — a mean grade and a share of a first screen do not belong on one
+    scale, and forcing them onto one invents a crossing point that is an artifact of the
+    scaling.
+
+    ``reference`` draws the do-nothing arm as a dashed rule per series, so every point is read
+    as a departure from it rather than in isolation.
+
+    Args:
+        dose: Ordered dose levels, plotted left to right as given. Categorical labels are fine.
+        series: Series name -> values, one per dose level. At most two.
+        reference: Optional series name -> the control value for that series.
+        figsize: Figure size.
+        title: Plot title.
+        xlabel: X axis label.
+        ylabels: Optional axis labels, one per series, in ``series`` order.
+
+    Returns:
+        (fig, stats) — stats holds, per series, the values, the reference if given, and the
+        range spanned across the doses.
+
+    Raises:
+        ValueError: If ``series`` is empty or holds more than two entries, or if any series
+            length differs from ``dose``.
+    """
+    if not series:
+        raise ValueError("No series to plot.")
+    if len(series) > 2:
+        raise ValueError(
+            f"{len(series)} series exceeds the two-axis cap; a third unit has no axis left "
+            "to be honest on. Facet instead."
+        )
+    for name, values in series.items():
+        if len(values) != len(dose):
+            raise ValueError(f"series {name!r} has {len(values)} values for {len(dose)} doses.")
+
+    reference = reference or {}
+    positions = np.arange(len(dose))
+    fig, primary = plt.subplots(figsize=figsize, constrained_layout=True)
+    axes = [primary, primary.twinx()] if len(series) == 2 else [primary]
+    stats: dict = {"dose": [str(d) for d in dose], "series": {}}
+    handles: list = []
+
+    for index, (name, values) in enumerate(series.items()):
+        ax = axes[index]
+        colour = _SERIES_COLORS[index]
+        line = ax.plot(
+            positions,
+            list(values),
+            marker="o",
+            markersize=7,
+            linewidth=2.0,
+            color=colour,
+            label=name,
+            zorder=3,
+        )[0]
+        handles.append(line)
+
+        control = reference.get(name)
+        if control is not None:
+            ax.axhline(
+                control,
+                color=colour,
+                linewidth=1.2,
+                linestyle="--",
+                alpha=0.75,
+                zorder=2,
+            )
+            # Anchored left, where the dose curves have not arrived yet: at the right-hand
+            # end the reference rule and the final marker converge on the same few pixels.
+            ax.annotate(
+                f"control {control:.3f}",
+                xy=(positions[0], control),
+                xytext=(4, 5),
+                textcoords="offset points",
+                ha="left",
+                fontsize=9,
+                color=colour,
+            )
+
+        ax.set_ylabel(
+            ylabels[index] if ylabels is not None and index < len(ylabels) else name, color=colour
+        )
+        ax.tick_params(axis="y", colors=colour)
+        stats["series"][name] = {
+            "values": [float(v) for v in values],
+            "reference": None if control is None else float(control),
+            "range": round(float(max(values)) - float(min(values)), 4),
+        }
+
+    primary.set_xticks(positions, [str(d) for d in dose])
+    primary.set_xlabel(xlabel)
+    if title:
+        primary.set_title(title)
+    primary.legend(handles, [h.get_label() for h in handles], frameon=False, loc="center right")
+    primary.grid(True, axis="x", alpha=0.25, linewidth=0.6)
+    primary.set_axisbelow(True)
+    primary.spines[["top"]].set_visible(False)
+    for ax in axes[1:]:
+        ax.spines[["top"]].set_visible(False)
 
     return fig, stats

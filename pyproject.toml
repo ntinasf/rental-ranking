@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "rental-ranking"
 version = "0.1.0"
-description = "Two-stage search ranking (retrieval -> ranking) for short-term rental listings using Inside Airbnb data, on Azure ML."
+description = "Search ranking for short-term rental listings using Inside Airbnb data, on Azure ML."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -20,6 +20,10 @@ dependencies = [
     "pyarrow>=24.0.0",
     "scipy>=1.17.1",
     "azure-ai-textanalytics>=5.4.0",
+    # data/build.py calls load_dotenv() at the top of main(). Declared explicitly
+    # because it otherwise arrives only as a transitive dep of mlflow-skinny, which
+    # makes the data layer's entry point depend on the tracking library's dep graph.
+    "python-dotenv",
 ]
 
 [dependency-groups]

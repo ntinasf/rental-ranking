@@ -1,0 +1,130 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns:xlink="http://www.w3.org/1999/xlink" width="1240" height="922" viewBox="0 0 1240 922" xmlns="http://www.w3.org/2000/svg" role="img"
+     aria-label="Traffic split diagram for the large-area search experiment">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#8b857c"/>
+    </marker>
+    <marker id="ax" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#b8b2a8"/>
+    </marker>
+    <style>
+      .box  { fill:#fff; stroke:#ddd8d0; stroke-width:1.4; rx:8; }
+      .ctl  { fill:#f2f5f3; stroke:#8aa899; stroke-width:1.8; }
+      .trt  { fill:#fbf3ec; stroke:#c99a6f; stroke-width:1.8; }
+      .off  { fill:#f5f3f0; stroke:#ddd8d0; stroke-width:1.4; stroke-dasharray:5 4; }
+      .band { fill:#f7f4ef; stroke:#c9c2b7; stroke-width:1.4; }
+      .ln   { stroke:#8b857c; stroke-width:1.6; fill:none; marker-end:url(#a); }
+      .lnx  { stroke:#b8b2a8; stroke-width:1.5; fill:none; stroke-dasharray:5 4; marker-end:url(#ax); }
+      .cmp  { stroke:#7a4b2a; stroke-width:1.6; fill:none; }
+      .cmpd { stroke:#a79f94; stroke-width:1.5; fill:none; stroke-dasharray:5 4; }
+      text  { font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif; fill:#1c1a17; }
+      .t    { font-size:15px; font-weight:600; text-anchor:middle; }
+      .s    { font-size:13px; fill:#5d574f; text-anchor:middle; }
+      .xs   { font-size:12px; fill:#6b665e; text-anchor:middle; }
+      .cap  { font-size:11px; fill:#8b857c; text-anchor:middle; letter-spacing:.09em; text-transform:uppercase; }
+      .mut  { fill:#8b857c; }
+      .acc  { fill:#7a4b2a; font-weight:600; }
+    </style>
+  </defs>
+
+  <!-- 1. all traffic -->
+  <rect class="box" x="470" y="14" width="300" height="50"/>
+  <text class="t" x="620" y="44">All search traffic</text>
+  <path class="ln" d="M620,64 L620,96"/>
+
+  <!-- 2. eligibility -->
+  <rect class="box" x="410" y="98" width="420" height="62"/>
+  <text class="t" x="620" y="124">Does the search name a neighbourhood?</text>
+  <text class="xs" x="620" y="145">city &#183; room type &#183; party size are always given</text>
+
+  <!-- yes -> out of the experiment -->
+  <path class="lnx" d="M830,129 L888,129"/>
+  <text class="xs" x="859" y="120" style="fill:#8b857c">yes</text>
+  <rect class="off" x="892" y="96" width="332" height="66" rx="8"/>
+  <text class="t" x="1058" y="122" style="fill:#6b665e">Scoped search</text>
+  <text class="xs" x="1058" y="143">served as today &#183; not eligible &#183; not assigned</text>
+
+  <!-- no -> eligible -->
+  <path class="ln" d="M620,160 L620,196"/>
+  <text class="xs" x="600" y="182" style="text-anchor:end">no</text>
+  <rect class="box" x="450" y="198" width="340" height="50"/>
+  <text class="t" x="620" y="228">Eligible session &#8594; large-area search</text>
+
+  <path class="ln" d="M620,248 L620,282"/>
+
+  <!-- 3. assignment -->
+  <rect class="band" x="330" y="284" width="580" height="64"/>
+  <text class="t" x="620" y="310">Assignment &#8212; stable hash of the session id</text>
+  <text class="xs" x="620" y="331">equal thirds &#183; one policy per visit &#183; re-queries inherit the arm</text>
+
+  <!-- split -->
+  <path class="ln" d="M620,348 L620,372 L190,372 L190,404"/>
+  <path class="ln" d="M620,348 L620,404"/>
+  <path class="ln" d="M620,348 L620,372 L1050,372 L1050,404"/>
+  <text class="xs" x="405" y="366">33 %</text>
+  <text class="xs" x="655" y="366">33 %</text>
+  <text class="xs" x="835" y="366">33 %</text>
+
+  <!-- 4. arms -->
+  <rect class="ctl" x="40" y="406" width="300" height="54" rx="8"/>
+  <text class="t" x="190" y="440">Control</text>
+
+  <rect class="trt" x="470" y="406" width="300" height="54" rx="8"/>
+  <text class="t" x="620" y="440">Treatment &#183; k = 2</text>
+
+  <rect class="trt" x="900" y="406" width="300" height="54" rx="8"/>
+  <text class="t" x="1050" y="440">Treatment &#183; k = 3</text>
+
+  <path class="ln" d="M190,460 L190,492"/>
+  <path class="ln" d="M620,460 L620,490"/>
+  <path class="ln" d="M1050,460 L1050,492"/>
+
+  <!-- 5. candidate set -->
+  <rect x="402" y="471" width="436" height="22" fill="#fbfaf8"/>
+  <text class="cap" x="620" y="486">candidate set &#8212; the only thing that differs</text>
+  <rect class="box" x="40" y="494" width="300" height="92"/>
+  <text class="s" x="190" y="522">Candidates from the</text>
+  <text class="s" x="190" y="542">whole eligible area</text>
+  <text class="xs" x="190" y="566">no geographic narrowing</text>
+
+  <rect class="box" x="470" y="494" width="300" height="92"/>
+  <text class="s" x="620" y="522">Candidates from the</text>
+  <text class="s" x="620" y="542"><tspan class="acc">2</tspan> highest-prior neighbourhoods</text>
+  <text class="xs" x="620" y="566">strongest tolerable dose</text>
+
+  <rect class="box" x="900" y="494" width="300" height="92"/>
+  <text class="s" x="1050" y="522">Candidates from the</text>
+  <text class="s" x="1050" y="542"><tspan class="acc">3</tspan> highest-prior neighbourhoods</text>
+  <text class="xs" x="1050" y="566">quality-neutral offline</text>
+
+  <path class="ln" d="M190,586 L190,616"/>
+  <path class="ln" d="M620,586 L620,616"/>
+  <path class="ln" d="M1050,586 L1050,616"/>
+
+  <!-- 6. the shared ranker -->
+  <rect class="band" x="40" y="618" width="1160" height="62"/>
+  <text class="t" x="620" y="654">Rank using the same LambdaMART model, byte-identical in all three arms</text>
+
+  <path class="ln" d="M190,680 L190,708"/>
+  <path class="ln" d="M620,680 L620,708"/>
+  <path class="ln" d="M1050,680 L1050,708"/>
+
+  <!-- 7. the screen -->
+  <rect class="box" x="70" y="710" width="240" height="46"/>
+  <text class="t" x="190" y="739" style="font-size:14px">Top 10 shown</text>
+  <rect class="box" x="500" y="710" width="240" height="46"/>
+  <text class="t" x="620" y="739" style="font-size:14px">Top 10 shown</text>
+  <rect class="box" x="930" y="710" width="240" height="46"/>
+  <text class="t" x="1050" y="739" style="font-size:14px">Top 10 shown</text>
+
+  <!-- 8. comparisons -->
+  <text class="cap" x="620" y="792">what is compared</text>
+
+  <path class="cmp" d="M190,802 L190,822 L620,822 L620,802"/>
+  <text class="s" x="405" y="843" style="fill:#7a4b2a">control vs k = 2 &#160;&#183;&#160; &#945; = 0.025</text>
+
+  <path class="cmp" d="M190,802 L190,866 L1050,866 L1050,802"/>
+  <text class="s" x="620" y="887" style="fill:#7a4b2a">control vs k = 3 &#160;&#183;&#160; &#945; = 0.025</text>
+
+</svg>
