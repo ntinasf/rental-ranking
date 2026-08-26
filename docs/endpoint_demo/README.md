@@ -1,161 +1,103 @@
-# Endpoint demonstration — what is here, and how to reproduce it
+# Endpoint demonstration
 
-The managed online endpoint is deleted the moment the demonstration ends, because an instance
-bills per hour whether or not a request arrives. So this directory *is* the
-demonstration. It has to answer the question a screenshot of a live endpoint cannot: **not that a
-service existed, but that the thing it served ranks.**
+The managed online endpoint was deployed, exercised and deleted in one session, because an
+instance bills by the hour whether or not a request arrives. So this directory *is* the
+demonstration, and it has to answer the question a screenshot of a live service cannot: not that
+an endpoint existed, but that the thing it served ranks.
 
 | file | what it is |
 |---|---|
-| `request_athens.json`, `request_crete.json`, `request_thessaloniki.json` | one query each — the full candidate set, 61 features per listing |
+| `request_athens.json`, `request_crete.json`, `request_thessaloniki.json` | one query each, the full candidate set, 61 features per listing |
 | `request_cold_start.json` | the Thessaloniki query with every review field sent as `null` |
 | `request_unknown_level.json` | the Thessaloniki query with one listing's `room_type` set to `Houseboat` |
 | `response_*.json` | exactly what came back |
-| `RESULTS.md` | each response joined to the **held-out grades** — the ordering with the truth beside it |
+| `RESULTS.md` | each response joined to the **held-out grades**, so the ordering sits beside the truth |
 | `endpoint.json` | the endpoint descriptor, for the record |
 
 ## Why these queries
 
-Chosen by a rule fixed before anything was scored: **within the sealed fold, the largest query
-group of at most 30 listings in each city, ties to the lower group id.** 30 because the response
-has to fit in a screenshot; per city because the model's quality differs by city.
+The rule was fixed before anything was scored: **within the sealed fold, the largest query group
+of at most 30 listings in each city, ties to the lower group id.** Thirty because the response has
+to fit on a screen, per city because the model's quality differs by city.
 
-Picking the query after seeing its NDCG would be the ranking equivalent of reporting the best
-seed. The rule returns one query the model handles poorly (Athens, 0.5976) and it is kept.
+Picking a query after seeing its NDCG would be the ranking equivalent of reporting the best seed.
+The rule returns one query the model handles poorly, Athens at **0.5976**, and that one is kept.
 
-Every one of them is in **fold 0**, held out of training, of the hyperparameter sweep, and of
+Every listing involved is in fold 0, held out of training, of the hyperparameter sweep and of
 every model-selection decision.
 
-## What to read in `RESULTS.md`
+The **counterfactual** is the part a static ranking cannot fake. The top-ranked listing is sent a
+second time with its review history stripped and everything else held. In Thessaloniki it falls
+from rank 1 to rank 15 of 23; in Crete it does not move. That contrast is the honest picture of
+what the model leans on, and it agrees with what notebook 04 measured.
 
-Each block is the endpoint's ordering with the truth attached, then four NDCG@10 numbers computed
-on the *same* candidate set: the endpoint, the two frozen baselines, and a random floor. **A
-single query's NDCG is an anecdote.** The estimate is the sealed fold — 0.7530 [0.7148, 0.7903]
-over 72 groups against 0.6429 for price+rating — and the per-query number is there so the
-ordering can be checked against the rows, not to be quoted.
+## Running it
 
-The **counterfactual** is the part a static ranking cannot fake: the top-ranked listing is sent a
-second time with its review history stripped and everything else held, and the rank it lands on
-is reported. In Thessaloniki it falls 1 → 15 of 23; in Crete it does not move. That contrast is
-the honest picture of what the model leans on, and it agrees with what notebook 04 measured.
-
-## The console
-
-`python -m rental_ranking.cloud.console` serves a local page that works the way a guest would:
-
-```bash
-uv run python -m rental_ranking.cloud.console --local   # no endpoint, no cost
-uv run python -m rental_ranking.cloud.console           # proxies to AML_ENDPOINT_URI
-```
-
-**Search** picks a city, a neighbourhood, a room type and a party size. That is not a skin over
-the demo — it is *literally the query-group key*. `features/groups.py` builds the group from
-`city × neighbourhood_cleansed × room_type × capacity_tier` precisely because that is "what a
-guest would have typed", so choosing those four selects the candidate set the model ranks.
-
-**The picker offers held-out listings only**, so every score it shows is out-of-sample: 112
-searches across the 74 sealed groups. The cost is stated on the page rather than hidden — **17 of
-75 neighbourhoods are unsearchable, 34.8 % of listings**, including the largest in every city
-(central Thessaloniki, 4,162 listings, 89 % of that city). The grouped split moves whole connected
-components and a large neighbourhood *is* a large component, so it lands in training entire.
-Offering those groups anyway would mean scoring data the model fitted, where the ordering is a
-memory rather than a prediction.
-
-**41 % of searches land in a pooled group** — fewer than five sealed listings shared the exact key,
-so the cascade re-keyed them at a coarser rung. The banner says so, names how many neighbourhoods
-the group really spans, and highlights the listings that matched your literal search.
-
-**Edit** any listing in the result: dropdowns carrying the real training levels for the five
-categoricals, boxes for the numerics, one-click presets. Re-rank and the table redraws with the
-listing's new position, the movement, and the metric before and after.
-
-Two constraints are deliberate. It **edits a real listing rather than composing one** — an
-invented row has no grade, so its ranking cannot be checked, and the most such a demo can show is
-that the service responds. And `city`/`room_type` are **shown but not editable**: they are the
-query-group key, constant inside a group, so changing one builds a candidate the search never
-contained.
-
-Re-ranking without touching anything is a true no-op — an untouched box submits the value at full
-precision rather than the rounded one it displays — so any movement is attributable to the edit.
-
-It is a **proxy, not a nicety**: a browser cannot call a managed endpoint directly (no CORS
-headers on the preflight), and putting the auth key in a page would hand a live credential to
-anything the browser loads. The key stays in the Python process. Standard library only.
-
-## Reproducing it
-
-Everything below runs against **the local scoring script**, no Azure account and no cost:
+Everything here runs against the local scoring script, with no Azure account and no cost:
 
 ```bash
 uv run python -m rental_ranking.cloud.demo --query thessaloniki --local --counterfactual
 uv run python -m rental_ranking.cloud.demo --query athens --variant cold-start --local
-uv run python -m rental_ranking.cloud.demo --capture --local     # rewrites RESULTS.md
 ```
 
-`--local` calls the same `init()`/`run()` the container calls, on the same bundle. It is the
+`--local` calls the same `init()` and `run()` the container calls, on the same bundle. It is the
 reference the cloud responses were diffed against.
 
-## What it looked like live
-
-Screenshots in [`../screenshots/`](../screenshots/), from the 2026-08-19 session:
-
-| | |
-|---|---|
-| [`console_win_kalamaria.png`](../screenshots/console_win_kalamaria.png) | 43 listings, **0.8785** against a 0.6163 floor, top three all grade 4 |
-| [`console_loss_kypseli.png`](../screenshots/console_loss_kypseli.png) | 15 listings, **0.6040** against a **0.6563** floor — beaten by both baselines and by chance |
-| [`endpoint_container_logs.png`](../screenshots/endpoint_container_logs.png) | `POST /score 200` at **12.9–14.5 ms**, `Python-urllib/3.11`, among the platform's health probes |
-
-The losing case is the useful one, and its cause is measurable: group 161 is fifteen listings graded
-`{1:×1, 2:×7, 3:×6, 4:×1}`, so thirteen of fifteen are a 2 or a 3 and two-thirds of the group reaches
-the top ten whatever the ordering. The floor sits at 0.6563 and the total spread between best and
-worst ranker is 0.08. The model is being measured on a query with almost nothing to order — which is
-why the estimate is 72 groups with an interval, not one query. Notebook 04 §10 works through it.
-
-## Running it as a container
+A local console searches on the same four fields a query group is built from, then lays the
+returned order against the held-out grades:
 
 ```bash
-uv run python -m rental_ranking.cloud.demo --bundle data/train/demo_bundle
-docker build -f docker/Dockerfile -t rental-ranker-console .
-docker run --rm -p 127.0.0.1:8000:8000 rental-ranker-console
+uv run python -m rental_ranking.cloud.console --local
 ```
 
-857 MB, no Azure dependency, no credential, no network. It carries the booster, the sealed fold
-already resolved, and a precomputed coverage report — so it needs neither the processed data layer
-nor a 25-second re-run of the fold assignment at every start.
+**Both need the data layer built first.** They read `data/train/serving_bundle/` and the feature
+table, which are gitignored derivatives, so a bare clone has nothing to score. `README.md` at the
+repository root has the build sequence, and it needs the raw Inside Airbnb snapshots.
 
-**This is not the scoring image.** Azure ML builds its own from `pipelines/score_environment.yml`,
-which carries `azureml-inference-server-http` and nothing else. Two images because they answer to
-different callers. Versions are pinned to the local environment that produced every number in the
-write-up: the container reproduces group 24 at **0.809461900603779**, digit for digit.
+`--capture` rewrites `RESULTS.md`. Against a live endpoint that is the intended use. With
+`--local` it refuses, because the committed transcript was captured against an endpoint that no
+longer exists and could not be regenerated.
 
-Building it needs `data/train/serving_bundle/` and `data/train/demo_bundle/`, both gitignored
-derivatives — so the image is reproducible from this repo plus the raw Inside Airbnb snapshots, not
-from a bare clone. The image redistributes Inside Airbnb data under CC BY 4.0 and carries the
-attribution in the page footer.
+## What the console does not cover
 
-## Redeploying, if the demonstration has to be run live again
+The picker offers **held-out listings only**, so every score it shows is out of sample: 112
+searches across the 74 sealed groups. The cost of that is stated on the page rather than hidden.
+**17 of 75 neighbourhoods are unsearchable, 34.8 % of listings**, including the largest in every
+city. Central Thessaloniki alone is 4,162 listings, 89 % of that city. The grouped split moves
+whole connected components, and a large neighbourhood *is* a large component, so it lands in
+training entire. Offering those groups anyway would mean scoring data the model fitted, where the
+ordering is a memory rather than a prediction.
 
-Full runbook with timings and the meter discipline: `docs/azure_setup.md`, step 8.
+**41 % of searches land in a pooled group**, because fewer than five sealed listings shared the
+exact key and the cascade re-keyed them at a coarser rung. The banner says so, names how many
+neighbourhoods the group really spans, and highlights the listings that matched the literal
+search.
 
-```bash
-# 1. deploy — the endpoint itself is free; the deployment provisions the billed instance (~15 min)
-az ml model create -f pipelines/model_asset.yml   # only if rental-ranker:1 is not registered
-az ml online-endpoint  create -f pipelines/endpoint.yml
-az ml online-deployment create -f pipelines/deployment.yml --all-traffic
+Two further constraints are deliberate. The console **edits a real listing rather than composing
+one**, since an invented row carries no grade and its ranking cannot be checked. And `city` and
+`room_type` are shown but not editable: they are the query-group key, constant inside a group, so
+changing either builds a candidate the search never contained.
 
-# 2. address -> .env (gitignored; the key dies with the endpoint, so there is nothing to rotate)
-#    Take the REST endpoint, NOT the Swagger URI listed directly below it in the Studio: a POST
-#    to /swagger.json returns HTTP 424 wrapping a 405, naming neither the URL nor the mistake.
-az ml online-endpoint show --name rental-ranker --query scoring_uri -o tsv   # ends in /score
-az ml online-endpoint get-credentials --name rental-ranker --query primaryKey -o tsv
+## The container image
 
-# 3. demonstrate
-uv run python -m rental_ranking.cloud.demo --query thessaloniki --counterfactual
-uv run python -m rental_ranking.cloud.demo --capture          # writes this directory
+`docker/Dockerfile` packages the console with the booster, the sealed fold already resolved and a
+precomputed coverage report, so it starts without the processed data layer. **This is not the
+scoring image.** Azure ML builds its own from `pipelines/score_environment.yml`, which carries
+`azureml-inference-server-http` and nothing else. Two images, because they answer to different
+callers.
 
-# 4. TEAR DOWN — issue it, then confirm. Deletion takes ~8 minutes.
-az ml online-endpoint delete --name rental-ranker --yes
-az ml online-endpoint list -o table                            # must be empty
-```
+Versions are pinned to the environment that produced every number in the write-up, and the
+container reproduces group 24 at **0.809461900603779**, digit for digit.
 
-Left running, `Standard_DS2_v2` at $0.1360/hr is about **$98/month**.
+Building it needs `data/train/serving_bundle/` and `data/train/demo_bundle/`, both gitignored, so
+the image is reproducible from this repository plus the raw snapshots rather than from a bare
+clone. It redistributes Inside Airbnb data under CC BY 4.0 and carries the attribution in the
+page footer.
+
+## Elsewhere
+
+- Screenshots from the live session, including a search the model loses to chance, are in
+  [`../screenshots/`](../screenshots/) and discussed in [the report](../report.md).
+- The full redeploy runbook, with timings, costs and the teardown discipline, is
+  [`../azure_setup.md`](../azure_setup.md), step 8. Left running, `Standard_DS2_v2` at
+  $0.1360/hr is about **$98/month**.

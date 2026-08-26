@@ -8,6 +8,10 @@ The queries were chosen by a label-blind rule — largest sealed group of at mos
 listings in each city, ties to the lower group id — not by score. One of the three is
 poor, and it is kept.
 
+One query is an anecdote. The estimate is the sealed fold: 0.7530 [0.7148, 0.7903] over 72 groups, against 0.6429 for price+rating and a 0.5519 floor.
+Each block below reports its own query's NDCG@10 so the ordering can be checked against
+the rows beside it, not so the number can be quoted.
+
 ## athens
 
 ```
@@ -50,9 +54,6 @@ NDCG@10 on this one query, all four rankers on the same 29 listings (10 of grade
   baseline: reviews       0.4063
   baseline: price+rating  0.4384
   random floor            0.3852
-
-One query is an anecdote. The estimate is the sealed fold: 0.7530 [0.7148, 0.7903] over
-72 groups, against 0.6429 for price+rating and a 0.5519 floor.
 
 counterfactual — 6a4ec0d0add5 with its review history stripped, everything else held:
   rank 1 -> 15 of 29   (true grade 3)
@@ -97,9 +98,6 @@ NDCG@10 on this one query, all four rankers on the same 25 listings (14 of grade
   baseline: price+rating  0.7550
   random floor            0.5587
 
-One query is an anecdote. The estimate is the sealed fold: 0.7530 [0.7148, 0.7903] over
-72 groups, against 0.6429 for price+rating and a 0.5519 floor.
-
 counterfactual — b751e16e28c1 with its review history stripped, everything else held:
   rank 1 -> 1 of 25   (true grade 4)
 ```
@@ -140,9 +138,6 @@ NDCG@10 on this one query, all four rankers on the same 23 listings (14 of grade
   baseline: reviews       0.6081
   baseline: price+rating  0.4128
   random floor            0.5743
-
-One query is an anecdote. The estimate is the sealed fold: 0.7530 [0.7148, 0.7903] over
-72 groups, against 0.6429 for price+rating and a 0.5519 floor.
 
 counterfactual — 92d4e8cf65e8 with its review history stripped, everything else held:
   rank 1 -> 15 of 23   (true grade 4)
@@ -185,9 +180,6 @@ NDCG@10 on this one query, all four rankers on the same 23 listings (14 of grade
   baseline: reviews       0.6081
   baseline: price+rating  0.4128
   random floor            0.5743
-
-One query is an anecdote. The estimate is the sealed fold: 0.7530 [0.7148, 0.7903] over
-72 groups, against 0.6429 for price+rating and a 0.5519 floor.
 
 The columns above are what these listings REALLY are. The request carried none of
 it — every review field was sent as null. And note what this query is not: it blanks

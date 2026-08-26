@@ -317,3 +317,46 @@ def test_the_readable_description_columns_are_not_features() -> None:
     listings = _listings().assign(name=["a title", "b title", "c title"])
     body = demo.build_payload(listings, _FEATURES)
     assert all("name" not in row for row in body["listings"])
+
+
+# --- the transcript is evidence, not a rebuildable artifact -------------------------------------
+
+
+def test_a_local_capture_refuses_to_overwrite_a_live_transcript(monkeypatch, tmp_path) -> None:
+    """``RESULTS.md`` is the only thing that outlives the endpoint.
+
+    The deployment is deleted in the same session that produces it, so a transcript naming the
+    live endpoint cannot be regenerated without paying for another one. ``--capture --local``
+    would rewrite it with in-process scores under a header claiming otherwise, and the documented
+    command sits three lines away from the live one.
+    """
+    monkeypatch.setattr(demo.paths, "ENDPOINT_DEMO_DIR", tmp_path)
+    (tmp_path / "RESULTS.md").write_text(f"Generated against **{demo.LIVE_SOURCE}**.\n")
+
+    with pytest.raises(SystemExit, match="only surviving evidence"):
+        demo.main(["--capture", "--local"])
+
+    assert demo.LIVE_SOURCE in (tmp_path / "RESULTS.md").read_text()
+
+
+def test_a_local_capture_over_a_local_transcript_is_allowed(monkeypatch, tmp_path) -> None:
+    """The guard protects one irreplaceable file, not the workflow around it."""
+    monkeypatch.setattr(demo.paths, "ENDPOINT_DEMO_DIR", tmp_path)
+    (tmp_path / "RESULTS.md").write_text(f"Generated against **{demo.LOCAL_SOURCE}**.\n")
+    monkeypatch.setattr(demo, "_capture", lambda *a, **k: "rewritten")
+    monkeypatch.setattr(demo, "_serving_metadata", lambda: {"features": list(_FEATURES)})
+
+    demo.main(["--capture", "--local"])
+
+    assert (tmp_path / "RESULTS.md").read_text().startswith("rewritten")
+
+
+def test_the_per_query_caveat_is_dropped_only_when_asked() -> None:
+    """A terminal block stands alone and carries it; a captured block sits under a header."""
+    response = _response(["a", "b", "c"], [2.0, 1.0, 0.0])
+    truth = demo.truth_frame(_listings())
+    table, quality = demo.explain(response, truth), demo.query_quality(response, truth)
+
+    spec = {"query_group": 7, "note": "three listings"}
+    assert demo.ANECDOTE_CAVEAT[0] in demo._render("q", spec, table, quality, 2)
+    assert demo.ANECDOTE_CAVEAT[0] not in demo._render("q", spec, table, quality, 2, estimate=False)

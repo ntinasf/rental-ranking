@@ -685,6 +685,19 @@ _DECIMALS: dict[str, int] = {
 _TITLE_WIDTH = 26
 
 
+#: What a per-query NDCG is not. One group of 25 listings carries no interval; the sealed-fold
+#: estimate does. Printed under every terminal block, and once in a captured transcript's header.
+ANECDOTE_CAVEAT: tuple[str, ...] = (
+    "One query is an anecdote. The estimate is the sealed fold: 0.7530 [0.7148, 0.7903] over",
+    "72 groups, against 0.6429 for price+rating and a 0.5519 floor.",
+)
+
+#: Where a captured transcript's numbers came from. The live one is unrepeatable: the endpoint is
+#: deleted in the same session, so a transcript naming it can never be regenerated.
+LIVE_SOURCE = "the live managed online endpoint, immediately before teardown"
+LOCAL_SOURCE = "the scoring script in-process, NOT the endpoint"
+
+
 def _display(table: pd.DataFrame) -> pd.DataFrame:
     """Round each column to the precision that column is read at, and cut the title to width."""
     shown = table.round({c: d for c, d in _DECIMALS.items() if c in table.columns})
@@ -696,7 +709,20 @@ def _display(table: pd.DataFrame) -> pd.DataFrame:
     return shown
 
 
-def _render(name: str, spec: dict, table: pd.DataFrame, quality: pd.Series, k: int) -> str:
+def _render(
+    name: str,
+    spec: dict,
+    table: pd.DataFrame,
+    quality: pd.Series,
+    k: int,
+    estimate: bool = True,
+) -> str:
+    """One query's ordering, its truth and its four NDCG@k numbers, as a text block.
+
+    ``estimate`` appends the sealed-fold figure the per-query number must not be mistaken for.
+    A terminal run prints one block with no surrounding context and needs it; ``_capture`` writes
+    four blocks under a shared header that states it once, and passes False.
+    """
     variant = spec.get("variant", "full")
     heading = f"query '{name}' — group {spec['query_group']}: {spec['note']}"
     if variant != "full":
@@ -712,10 +738,9 @@ def _render(name: str, spec: dict, table: pd.DataFrame, quality: pd.Series, k: i
         f"  baseline: reviews       {quality['baseline_reviews']:.4f}",
         f"  baseline: price+rating  {quality['baseline_price_rating']:.4f}",
         f"  random floor            {quality['random']:.4f}",
-        "",
-        "One query is an anecdote. The estimate is the sealed fold: 0.7530 [0.7148, 0.7903] over",
-        "72 groups, against 0.6429 for price+rating and a 0.5519 floor.",
     ]
+    if estimate:
+        lines += ["", *ANECDOTE_CAVEAT]
     if variant == "cold-start":
         lines += [
             "",
@@ -746,6 +771,10 @@ def _capture(features: Sequence[str], send, source: str) -> str:
         "listings in each city, ties to the lower group id — not by score. One of the three is",
         "poor, and it is kept.",
         "",
+        f"{ANECDOTE_CAVEAT[0]} {ANECDOTE_CAVEAT[1]}",
+        "Each block below reports its own query's NDCG@10 so the ordering can be checked against",
+        "the rows beside it, not so the number can be quoted.",
+        "",
     ]
     for name in DEMO_QUERIES:
         listings, spec = _sealed_listings(name)
@@ -756,7 +785,12 @@ def _capture(features: Sequence[str], send, source: str) -> str:
         if "error" in response:
             raise SystemExit(f"{name}: {response['error']}")
         rendered = _render(
-            name, spec, explain(response, truth), query_quality(response, truth), DEFAULT_K
+            name,
+            spec,
+            explain(response, truth),
+            query_quality(response, truth),
+            DEFAULT_K,
+            estimate=False,
         )
 
         top = response["ranked"][0][ID_COLUMN]
@@ -791,6 +825,7 @@ def _capture(features: Sequence[str], send, source: str) -> str:
             explain(cold, truth),
             query_quality(cold, truth),
             DEFAULT_K,
+            estimate=False,
         ),
         "```",
         "",
@@ -847,6 +882,12 @@ def main(argv: Sequence[str] | None = None) -> None:
         help="also send the top listing with its review history stripped, and report the move",
     )
     parser.add_argument(
+        "--force",
+        action="store_true",
+        help="let --capture --local overwrite a transcript captured against the live endpoint, "
+        "which cannot be regenerated without redeploying",
+    )
+    parser.add_argument(
         "--bundle",
         type=Path,
         help="write the container bundle here (the sealed fold plus a coverage report) and exit",
@@ -894,18 +935,30 @@ def main(argv: Sequence[str] | None = None) -> None:
         return
 
     if args.capture:
+        target = paths.ENDPOINT_DEMO_DIR / "RESULTS.md"
         if args.local:
-            sender, source = score_locally, "the scoring script in-process, NOT the endpoint"
+            # A live transcript cannot be regenerated: the endpoint that produced it was deleted
+            # in the same session, and redeploying costs an instance-hour and yields a different
+            # one. A local capture silently overwriting it would destroy the only evidence that
+            # the *served* model ranked, leaving five id/score blobs behind.
+            if not args.force and target.exists() and LIVE_SOURCE in target.read_text():
+                raise SystemExit(
+                    f"{target} was captured against {LIVE_SOURCE}, and a local capture would "
+                    "overwrite it with in-process scores.\nThat transcript is the only surviving "
+                    "evidence of the endpoint and cannot be regenerated without redeploying.\n"
+                    "Drop --local to capture against a live endpoint, or pass --force to "
+                    "overwrite deliberately."
+                )
+            sender, source = score_locally, LOCAL_SOURCE
         else:
             uri, key = endpoint_address()
-            source = "the live managed online endpoint, immediately before teardown"
+            source = LIVE_SOURCE
 
             def sender(body: Mapping[str, Any]) -> dict:
                 return invoke(uri, key, body)
 
         paths.ENDPOINT_DEMO_DIR.mkdir(parents=True, exist_ok=True)
         transcript = _capture(features, sender, source)
-        target = paths.ENDPOINT_DEMO_DIR / "RESULTS.md"
         target.write_text(transcript + "\n")
         print(transcript)
         print(f"\nwritten: {target}")
