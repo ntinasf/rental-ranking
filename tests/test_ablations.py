@@ -4,7 +4,7 @@ The one that carries the most weight is ``test_a_renamed_establishment_feature_r
 other failure in this module is loud; that one is silent. If a column is renamed and the block
 quietly resolves to seven features instead of eight, `minus establishment` still runs, still
 produces a plausible number, and still gets reported as "denied all 8 establishment features" —
-which is the sentence notebook 04 §7 rests its provenance argument on.
+which is the sentence the provenance argument rests on.
 
 The fits themselves are not tested here: they are four cross-validations per ablation and the
 thing worth pinning is which columns go into them, not that LightGBM works.

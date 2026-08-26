@@ -115,7 +115,7 @@ def test_plausible_short_stay_listing_passes_untouched() -> None:
 
 
 def test_listing_first_reviewed_shortly_before_the_anchor_is_kept() -> None:
-    """Thin history is the cold-start cohort Phase 2 flags — a decision, not an oversight."""
+    """Thin history is the cold-start cohort ``has_reviews`` flags — a decision, not an oversight."""
     rows = _frame([{"number_of_reviews": 1, "blocked_fraction_90": 0.2}])
     rows["first_review"] = pd.Timestamp("2026-06-20")
     rows["T"] = pd.Timestamp("2026-06-29")

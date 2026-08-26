@@ -270,7 +270,7 @@ def test_clean_listings_drops_the_consumed_sources(listings: pd.DataFrame) -> No
 
 
 def test_clean_listings_keeps_the_label_adjacent_columns(listings: pd.DataFrame) -> None:
-    """They are banned as model inputs but kept for validation — notebook 02 needs them."""
+    """They are banned as model inputs but kept for validation, which reads them."""
     out = clean.clean_listings(listings, CITY)
     assert set(cols.LABEL_ADJACENT_COLUMNS) <= set(out.columns)
 
@@ -295,7 +295,7 @@ def test_clean_listings_carries_scrape_date_per_row(listings: pd.DataFrame) -> N
 
 
 def test_clean_listings_computes_no_label_anchor(listings: pd.DataFrame) -> None:
-    """T is min(calendar.date) per listing and belongs to Phase 1, not to a listings frame."""
+    """T is min(calendar.date) per listing, so it belongs to the label step, not a listings frame."""
     out = clean.clean_listings(listings, CITY)
     assert not {"anchor_date", "T", "label_anchor"} & set(out.columns)
 
@@ -463,7 +463,7 @@ def _no_warning():
 
 
 def test_clean_listings_types_the_quote_dates(listings: pd.DataFrame) -> None:
-    """Label-adjacent, but still dates: notebook 02 subtracts T from the check-in date."""
+    """Label-adjacent, but still dates: validation subtracts T from the check-in date."""
     listings["price_quote_checkin_date"] = ["2026-06-29", "2026-10-31", None]
     listings["price_quote_checkout_date"] = ["2026-07-01", "2026-11-02", None]
     out = clean.clean_listings(listings, CITY)

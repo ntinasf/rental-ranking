@@ -8,7 +8,7 @@ the **protocol around it**, because each of these failures produces a plausible 
 * the acceptance rule must refuse a point-estimate win whose interval covers zero, because the
   maximum of ~35 noisy draws is positive by construction;
 * pruned configurations must stay in the results table, or the "configurations that lost" record
-  the roadmap asks for is quietly incomplete.
+  is quietly incomplete.
 """
 
 import numpy as np

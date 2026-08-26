@@ -250,7 +250,7 @@ def test_reviews_keeps_its_own_id_raw(reviews: pd.DataFrame) -> None:
     assert anon.anonymize_reviews(reviews, SALT)["id"].tolist() == [5001, 5002]
 
 
-def test_reviews_keeps_comments_for_phase_four_sentiment(reviews: pd.DataFrame) -> None:
+def test_reviews_keeps_comments_for_sentiment(reviews: pd.DataFrame) -> None:
     out = anon.anonymize_reviews(reviews, SALT)
     assert out["comments"].tolist() == reviews["comments"].tolist()
 

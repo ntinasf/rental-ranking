@@ -1,4 +1,4 @@
-"""Tests for the Phase 2 feature half of rental_ranking.features.reviews.
+"""Tests for the feature half of rental_ranking.features.reviews.
 
 The window functions are covered by ``test_reviews.py``; this file covers the derived features.
 
@@ -260,8 +260,8 @@ def test_real_review_history_is_strictly_pre_T(
 def test_real_correlations_reproduce_the_recorded_figures(
     real_block: tuple[pd.DataFrame, pd.DataFrame],
 ) -> None:
-    """Within the established cohort as notebook 02 defines it: first review at least a year
-    before T. The recorded triples are Thessaloniki / Athens / Crete."""
+    """Within the established cohort — first review at least a year before T. The recorded
+    triples are Thessaloniki / Athens / Crete."""
     from scipy.stats import spearmanr
 
     ranked, block = real_block

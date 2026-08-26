@@ -103,7 +103,10 @@ def test_ordinary_nan_is_not_filled() -> None:
 
 
 def test_training_groups_rejects_a_frame_that_lost_its_sort() -> None:
-    """BUILD_GUIDE gotcha #4, at the second of its two call sites. The sum still checks out."""
+    """The group array must match row order, at the second of its two call sites.
+
+    The sum still checks out on a shuffled frame, which is why contiguity is the real check.
+    """
     frame = _table([6, 6, 6])
     shuffled = frame.sample(frac=1.0, random_state=0)
     assert lm.training_groups(frame).sum() == len(frame)
@@ -150,8 +153,8 @@ def test_a_grade_the_gain_vector_cannot_address_stops_the_fit() -> None:
 
 
 def test_the_starting_parameters_are_deterministic() -> None:
-    """Measured 2026-08-18. Five seeds give bit-identical predictions, so a reported spread of
-    0.000 means there was no randomness to average over — not that the model is stable."""
+    """Different seeds give bit-identical predictions, so a reported spread of zero means there
+    was no randomness to average over — not that the model is stable."""
     assert not lm.is_stochastic({})
     frame = _table([40] * 5)
     first = lm.predict(lm.fit(frame, seed=0, n_estimators=30), frame)

@@ -2,7 +2,7 @@
 
 Two of these guard money rather than correctness, which is unusual for this suite and is the
 point: ``text_records`` is what a run is priced against **before** it calls, and ``batches`` is
-the mechanism behind BUILD_GUIDE gotcha #5. A bug in either produces a run that works and
+the mechanism behind the never-call-inside-a-loop rule. A bug in either produces a run that works and
 quietly spends the free tier — 393 documents sent one at a time still returns the right answer.
 
 The **minimum one record per document** rule is tested explicitly because getting it wrong is
@@ -38,8 +38,8 @@ def test_text_records_charges_a_minimum_of_one_per_document(
 
 
 def test_the_real_selection_prices_at_one_record_per_review() -> None:
-    """Measured 2026-08-18: query group 24 is 393 reviews and 393 records, not 78. The whole
-    corpus is short enough that the per-document minimum dominates."""
+    """The real selection is 393 reviews and 393 records, not 78: the corpus is short enough
+    that the per-document minimum dominates."""
     corpus = ["x" * 195] * 393
     assert feat.text_records(corpus) == 393
 

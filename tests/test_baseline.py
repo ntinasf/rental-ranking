@@ -5,10 +5,10 @@ A note in a log is a promise; the real-snapshot test at the bottom is the mechan
 baseline is "improved" later, that test fails and the change has to be argued for rather than
 made quietly.
 
-The recorded figures are **full-population reference numbers**, not held-out estimates — the
-grouped split does not exist until Phase 3, and a full-population baseline compared against a
-test-set model would be a comparison of two different things. Phase 3 re-runs this same code on
-the test split alongside the model; that comparison is the headline.
+The recorded figures are **full-population reference numbers**, not held-out estimates: the
+grouped split does not exist yet when they are taken, and a full-population baseline compared
+against a test-set model would be a comparison of two different things. Training re-runs this
+same code on the test split alongside the model, and that comparison is the headline.
 """
 
 import numpy as np
@@ -85,7 +85,7 @@ def test_baseline_b_is_robust_to_a_price_outlier() -> None:
 
 
 def test_baseline_b_refuses_an_incomplete_frame() -> None:
-    """`price` is imputed in Phase 1 and `rating_shrunk` is never null, so a null is a wrong frame."""
+    """`price` is imputed upstream and `rating_shrunk` is never null, so a null is a wrong frame."""
     frame = _listings([{"price": float("nan")}, {}])
 
     with pytest.raises(ValueError, match="complete inputs"):
@@ -123,7 +123,7 @@ def real_ranked() -> pd.DataFrame:
 
 
 def test_the_frozen_baseline_numbers_have_not_moved(real_ranked: pd.DataFrame) -> None:
-    """**The freeze.** Recorded 2026-08-17, before any model existed. Full population.
+    """**The freeze.** Recorded before any model existed, over the full population.
 
     If this fails, either a baseline definition changed or the snapshots rotated — both of which
     must be a decision, not a surprise discovered while comparing against a model.
@@ -170,7 +170,7 @@ def test_both_baselines_beat_a_random_ranking(real_ranked: pd.DataFrame) -> None
 
 
 def test_the_establishment_baseline_leads_the_value_heuristic(real_ranked: pd.DataFrame) -> None:
-    """Phase 1 predicted this: the label is substantially establishment-driven."""
+    """As the label analysis predicted: the label is substantially establishment-driven."""
     groups = real_ranked["query_group"]
     a = evaluate_ranking(real_ranked["grade"], groups, baseline.rank_by_reviews(real_ranked)).loc[
         "overall", "ndcg@10"
@@ -182,12 +182,12 @@ def test_the_establishment_baseline_leads_the_value_heuristic(real_ranked: pd.Da
     assert a > b
 
 
-# --- the Phase 3 comparators, frozen before any model exists ------------------------------------
+# --- the split comparators, frozen before any model exists --------------------------------------
 
 
 @pytest.fixture(scope="module")
 def real_features() -> pd.DataFrame:
-    """The shipped feature table — what Phase 3 actually trains and evaluates on.
+    """The shipped feature table — what training actually fits and evaluates on.
 
     Read from disk rather than rebuilt from the processed layer, because ``query_group`` and
     ``cluster_id`` are positional ids: a rebuild in a different row order would produce a
@@ -201,7 +201,7 @@ def real_features() -> pd.DataFrame:
     return pd.read_parquet(FEATURE_TABLE_PATH)
 
 
-def _phase3_table(features: pd.DataFrame, sealed: bool) -> pd.DataFrame:
+def _split_table(features: pd.DataFrame, sealed: bool) -> pd.DataFrame:
     from rental_ranking.evaluate.report import comparison_table
     from rental_ranking.train.split import assign_folds, sealed_mask
 
@@ -231,15 +231,15 @@ def _phase3_table(features: pd.DataFrame, sealed: bool) -> pd.DataFrame:
 def test_the_frozen_split_comparators_have_not_moved(
     real_features: pd.DataFrame, sealed: bool, slice_name: str, expected: dict[str, float]
 ) -> None:
-    """**The Phase 3 freeze.** Recorded 2026-08-18, before any model existed.
+    """**The split freeze.** Recorded before any model existed.
 
     A model scored on the sealed fold has to be compared against baselines scored on *the same
-    groups* — measured, baseline A alone moves 0.630-0.672 across the five folds, so the
-    full-population figures are the wrong comparator for a sealed-fold result. Freezing them
+    groups*: the baselines move enough between folds that the full-population figures are the
+    wrong comparator for a sealed-fold result. Freezing them
     here, before training, is what stops the comparator being computed after the model's number
     is known and framed around it.
     """
-    table = _phase3_table(real_features, sealed)
+    table = _split_table(real_features, sealed)
     for ranker in ("reviews", "price_rating"):
         got = table.loc[(slice_name, ranker), "ndcg@10"]
         assert got == pytest.approx(expected[ranker], abs=0.005), ranker
@@ -257,8 +257,8 @@ def test_the_baseline_ordering_flips_on_the_sealed_fold(real_features: pd.DataFr
     report that assumes "A is the baseline to beat" would name the wrong comparator, and the
     honest headline compares against **both**.
     """
-    sealed = _phase3_table(real_features, sealed=True)
-    dev = _phase3_table(real_features, sealed=False)
+    sealed = _split_table(real_features, sealed=True)
+    dev = _split_table(real_features, sealed=False)
 
     assert sealed.loc[("overall", "price_rating"), "vs_reviews"] > 0
     assert dev.loc[("overall", "price_rating"), "vs_reviews"] < 0
@@ -279,7 +279,7 @@ def test_the_cutoff_slice_is_where_the_baselines_can_be_told_apart(
     while over the groups the cut-off actually cuts the floor is 0.4655. Reporting one number
     across both averages a quarter of the metric's weight in from where nothing can be shown.
     """
-    dev = _phase3_table(real_features, sealed=False)
+    dev = _split_table(real_features, sealed=False)
     assert dev.loc[("n<=10", "reviews"), "floor"] > 0.75
     assert dev.loc[("n>10", "reviews"), "floor"] < 0.50
     # The lead over the floor is roughly ten times larger where the cut-off cuts.

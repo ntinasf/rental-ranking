@@ -188,8 +188,7 @@ def test_a_uri_that_is_not_the_scoring_path_is_caught_before_the_call(
     monkeypatch, given: str, expected: str
 ) -> None:
     """The Studio page lists the Swagger URI one line below the REST endpoint. Posting to it
-    returns HTTP 424 wrapping a 405, which names neither the URL nor the mistake — measured
-    2026-08-19 against a live endpoint."""
+    returns HTTP 424 wrapping a 405, which names neither the URL nor the mistake."""
     monkeypatch.setattr(demo, "load_dotenv", lambda *a, **k: None)
     monkeypatch.setenv(demo.URI_VAR, given)
     monkeypatch.setenv(demo.KEY_VAR, "not-a-real-key")
@@ -230,7 +229,7 @@ def _metadata() -> dict:
 
 
 def test_a_column_present_and_null_for_every_row_scores_rather_than_crashing() -> None:
-    """Regression, 2026-08-19. ``json.loads`` gives an all-null column ``object`` dtype and
+    """Regression. ``json.loads`` gives an all-null column ``object`` dtype and
     LightGBM raises ``pandas dtypes must be int, float or bool`` — unhandled, so a 500. An absent
     column and an all-null column are the same request; only the serialiser differs."""
     frame = pd.DataFrame(

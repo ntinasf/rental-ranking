@@ -195,7 +195,7 @@ def test_group_sizes_are_the_run_lengths_in_row_order() -> None:
 
 
 def test_group_sizes_sum_to_the_row_count(_no_warning) -> None:
-    """BUILD_GUIDE gotcha #4, on the assignment rather than on a hand-built array."""
+    """The group array must sum to the row count, on the assignment rather than a hand-built array."""
     ids, _ = groups.query_group(_ranked((5, {}), (5, {"neighbourhood_cleansed": "Exarchia"})))
 
     assert groups.group_sizes(ids.sort_values()).sum() == len(ids)
@@ -269,7 +269,7 @@ def test_cluster_sizes_count_the_membership() -> None:
 
 @pytest.fixture(scope="module")
 def real_ranked() -> pd.DataFrame:
-    """The ranked population Phase 2 groups: filtered, with the label attached."""
+    """The ranked population the query groups are built over: filtered, with the label attached."""
     for name in ("listings", "calendar"):
         if not (PROCESSED_DIR / f"{name}.parquet").exists():
             pytest.skip(f"processed layer not on disk: {name}.parquet")

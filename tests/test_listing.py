@@ -83,7 +83,7 @@ def test_building_type_separates_what_room_type_conflates() -> None:
 
 
 def test_nothing_is_imputed_so_a_null_bedroom_count_stays_null() -> None:
-    """Decided 2026-08-17. Within a query group the label percentile is 0.498 vs 0.505."""
+    """Within a query group the null-bedrooms label percentile is indistinguishable from the rest."""
     frame = _listings([{"bedrooms": float("nan")}, {"bedrooms": 2.0}])
     out = listing.listing_features(frame)
 
@@ -193,5 +193,5 @@ def test_the_block_builds_on_the_real_population() -> None:
     assert len(out) == len(ranked)
     assert out["id"].is_unique
     assert set(out.columns) & LABEL_ADJACENT_COLUMNS == set()
-    assert out["price"].notna().all()  # imputed in Phase 1
+    assert out["price"].notna().all()  # imputed upstream
     assert out["bedrooms"].isna().any()  # and deliberately not imputed here

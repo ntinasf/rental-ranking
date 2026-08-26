@@ -452,7 +452,7 @@ def test_grading_never_reads_a_price_column() -> None:
 
 @pytest.fixture(scope="module")
 def real_ranked() -> pd.DataFrame:
-    """The ranked population as Phase 1 hands it to grading: filtered, price imputed."""
+    """The ranked population as it reaches grading: filtered, price imputed."""
     from rental_ranking.data.filters import filter_listings
     from rental_ranking.features.groups import capacity_tier
     from rental_ranking.features.price import impute_price

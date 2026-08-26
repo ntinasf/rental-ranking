@@ -74,7 +74,7 @@ def test_every_blocklist_member_is_caught_not_just_the_first() -> None:
             assemble.check_feature_table(_table(**{blocked: 1}))
 
 
-def test_a_phase_one_diagnostic_column_is_caught() -> None:
+def test_a_diagnostic_column_is_caught() -> None:
     """`avail_90` is the label's own numerator; it is not on the contract blocklist."""
     with pytest.raises(ValueError, match="diagnostic"):
         assemble.check_feature_table(_table(avail_90=3))
@@ -162,7 +162,7 @@ def test_every_feature_block_reached_the_matrix(real_table: pd.DataFrame) -> Non
 
 
 def test_the_six_aspect_sub_scores_reached_the_matrix(real_table: pd.DataFrame) -> None:
-    """The columns that made a sentiment feature unnecessary — measured 2026-08-17."""
+    """The columns that made a sentiment feature unnecessary."""
     for aspect in ("accuracy", "cleanliness", "checkin", "communication", "location", "value"):
         assert f"review_scores_{aspect}" in real_table.columns
 
