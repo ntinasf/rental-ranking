@@ -52,6 +52,7 @@ NOTEBOOK_FIGURES: dict[str, tuple[str, int, int]] = {
     "learning_curves.png": ("04_evaluation.ipynb", 17, 0),
 }
 
+
 #: Hand-drawn diagrams that live under ``docs/`` as self-contained HTML pages: one inline
 #: ``<svg>``, no scripts, no external assets. The page stays the editable original — it is what
 #: you open to change the drawing — and ``docs/figures/`` gets the two renderings a Markdown

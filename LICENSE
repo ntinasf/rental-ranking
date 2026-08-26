@@ -1,0 +1,65 @@
+This repository contains two kinds of material under two different licences: the
+software, which is MIT, and the listing data derived from Inside Airbnb, which is
+CC BY 4.0 and requires attribution. Both are set out below.
+
+
+================================================================================
+The software
+================================================================================
+
+MIT License
+
+Copyright (c) 2026 Fotios Ntinas
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+This covers everything under `src/`, `tests/`, `pipelines/`, `docker/` and the
+written analysis in `docs/` and `notebooks/`.
+
+
+================================================================================
+The data
+================================================================================
+
+The listing data this project analyses comes from Inside Airbnb
+(https://insideairbnb.com) and is published under the Creative Commons
+Attribution 4.0 International licence (CC BY 4.0):
+
+    https://creativecommons.org/licenses/by/4.0/
+
+The snapshots themselves are not in this repository. What is committed are
+figures, tables and captured endpoint responses derived from them, chiefly
+under `docs/endpoint_demo/`, `docs/figures/`, `docs/screenshots/` and the
+outputs stored in `notebooks/`. Those derived works remain under CC BY 4.0.
+Reusing them requires crediting Inside Airbnb.
+
+Host and reviewer identifiers are salted-hashed by
+`src/rental_ranking/data/anonymize.py` before anything is committed or
+published. The salt is not distributed, so the hashes in this repository cannot
+be reversed or re-derived from a clone.
+
+Inside Airbnb is not affiliated with Airbnb, Inc., and neither is this project.
+
+
+================================================================================
+Third-party dependencies
+================================================================================
+
+Runtime and development dependencies keep their own licences, which are
+resolved and pinned in `uv.lock`. None of them are vendored here.

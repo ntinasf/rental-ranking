@@ -232,9 +232,13 @@ map, are in [report §12](docs/report.md#12-limitations) with the measurement be
 
 ---
 
-## Attribution
+## Licence and attribution
 
-Data from [Inside Airbnb](https://insideairbnb.com/), licensed
-[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Host and reviewer identifying
-information is stripped or hashed by `src/rental_ranking/data/anonymize.py` before anything is
-committed or published. Listing ids are hashed; listing titles are public and are shown as-is.
+The code is MIT. The listing data comes from [Inside Airbnb](https://insideairbnb.com/) and is
+licensed [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/), so the figures, tables and
+captured responses derived from it carry that licence and require attribution. Both are set out
+in [LICENSE](LICENSE).
+
+Host and reviewer identifying information is stripped or hashed by
+`src/rental_ranking/data/anonymize.py` before anything is committed or published. Listing ids are
+hashed; listing titles are public and are shown as-is.
