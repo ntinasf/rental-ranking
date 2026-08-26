@@ -1,19 +1,18 @@
 """Orchestrate processed → feature table: the only module that writes ``data/features/``.
 
 What ``data/build.py`` is to the processed layer, this is to the modelling one. Every module
-beside it in ``features/`` is a pure transform; this is where they are chained in the order the
-contract fixes, where the filesystem is touched, and where the per-stage reports are printed so
-a run leaves a record of what it did rather than only an artifact.
+beside it in ``features/`` is a pure transform; this is where they are chained, where the
+filesystem is touched, and where the per-stage reports are printed so a run leaves a record of
+what it did rather than only an artifact.
 
-**The order is not negotiable** and is the same one Phase 1 established:
+**The order is not negotiable:**
 
 ``label → filters → price imputation → grading → grouping → feature blocks``
 
 Filters run before imputation and grading so every quantile is computed on the population that
 will actually be ranked; grouping runs after grading so the coarsening check has both keys.
 
-Run it with ``uv run python -m rental_ranking.features.build``. The output is the second and
-last artifact the project registers as an Azure data asset.
+Run it with ``uv run python -m rental_ranking.features.build``.
 """
 
 import pandas as pd
@@ -31,7 +30,7 @@ _REVIEW_COLUMNS = ["listing_id", "date"]
 
 
 def prepare_ranked(listings: pd.DataFrame, calendar: pd.DataFrame) -> pd.DataFrame:
-    """Run Phase 1 and the grouping, returning the frame the feature blocks consume.
+    """Label, filter, price, grade and group, returning the frame the feature blocks consume.
 
     Args:
         listings: Processed listings.

@@ -7,19 +7,17 @@ listings from different searches and every metric still prints a plausible numbe
 **Three column roles, kept apart on purpose.** :data:`IDENTIFIER_COLUMNS` join and group,
 :data:`TARGET_COLUMNS` are what the model is trained against, and everything else is a feature.
 The trainer must take its feature list from :func:`feature_columns` rather than from
-``table.columns``, so the label cannot arrive as an input by omission — the single most
-expensive mistake available at this point in the project.
+``table.columns``, so the label cannot arrive as an input by omission.
 
-**The blocklist is read from ``columns.py``, never from a list kept here.** A column moved into
-``LABEL_ADJACENT_COLUMNS`` by a future snapshot is enforced without anyone remembering to update
-this module. Alongside it, :data:`PHASE1_DIAGNOSTIC_COLUMNS` blocks the working columns Phase 1
-produced for validation — ``avail_90`` is the label's own numerator, ``blocked_fraction_calendar``
-spans the label window and then some, and ``T``/``scrape_date`` would let a model learn which
-scrape day a listing came from.
+**The blocklist is read from ``columns.py``, never from a list kept here**, so a column moved into
+``LABEL_ADJACENT_COLUMNS`` by a future snapshot is enforced without anyone updating this module.
+Alongside it, :data:`DIAGNOSTIC_COLUMNS` blocks the working columns the label step produced
+for validation — ``avail_90`` is the label's own numerator, ``blocked_fraction_calendar`` spans
+the label window and then some, and ``T``/``scrape_date`` would let a model learn which scrape day
+a listing came from.
 
-Convention: a pure ``DataFrame -> DataFrame`` transform. Reading the parquets and writing the
-matrix belong to ``features/build.py``, which is to this layer what ``data/build.py`` is to the
-processed one.
+A pure ``DataFrame -> DataFrame`` transform; reading the parquets and writing the matrix belong to
+``features/build.py``.
 """
 
 import pandas as pd
@@ -43,12 +41,13 @@ IDENTIFIER_COLUMNS: tuple[str, ...] = ("id", "query_group", "cluster_id")
 #: input.
 TARGET_COLUMNS: tuple[str, ...] = ("grade", "blocked_fraction_90")
 
-#: Phase-1 working columns that are not on the contract's blocklist but must not reach a model.
+#: Working columns from the label and grading steps: not on the blocklist, but never a model
+#: input.
 #: ``avail_90`` is the label's numerator; ``blocked_fraction_calendar`` covers the label window
 #: and the rest of the year; ``calendar_days``/``calendar_span`` describe the label's own
 #: denominator; ``T`` and ``scrape_date`` identify the scrape batch; ``level`` is the grading
 #: report's rung marker.
-PHASE1_DIAGNOSTIC_COLUMNS: frozenset[str] = frozenset(
+DIAGNOSTIC_COLUMNS: frozenset[str] = frozenset(
     {
         "avail_90",
         "blocked_fraction_calendar",
@@ -79,10 +78,10 @@ def check_feature_table(table: pd.DataFrame) -> pd.Series:
     Five checks, each guarding a failure that is silent rather than loud:
 
     1. **No blocklist column**, read live from ``columns.py``.
-    2. **No Phase-1 diagnostic column** — see :data:`PHASE1_DIAGNOSTIC_COLUMNS`.
+    2. **No label-step diagnostic column** — see :data:`DIAGNOSTIC_COLUMNS`.
     3. **One row per listing.** A duplicated id would double a listing's weight in its group.
-    4. **Sorted by query group, in contiguous runs** — BUILD_GUIDE gotcha #4. Delegated to
-       ``group_sizes``, which is the module that owns the rule.
+    4. **Sorted by query group, in contiguous runs**, delegated to ``group_sizes``, which is the
+       module that owns the rule.
     5. **No null identifiers or targets.** A null grade trains against nothing; a null group id
        silently joins whichever query precedes it.
 
@@ -103,10 +102,10 @@ def check_feature_table(table: pd.DataFrame) -> pd.Series:
             "availability windows or direct reads of the label and may never be model inputs"
         )
 
-    diagnostics = sorted(set(table.columns) & PHASE1_DIAGNOSTIC_COLUMNS)
+    diagnostics = sorted(set(table.columns) & DIAGNOSTIC_COLUMNS)
     if diagnostics:
         raise ValueError(
-            f"Phase-1 diagnostic column(s) reached the feature table: {diagnostics}. They exist "
+            f"diagnostic column(s) reached the feature table: {diagnostics}. They exist "
             "for validation and every one of them is derived from the label window"
         )
 
@@ -152,7 +151,7 @@ def assemble_feature_table(
             ``query_group`` and ``cluster_id`` — the frame ``features/build.py`` prepares.
         reviews: Processed reviews. When given, ``reviews_same_season_ly`` joins the block;
             when omitted it is left out rather than filled.
-        amenity_scheme: Passed through to the amenity encoding, so the Phase 3 comparison
+        amenity_scheme: Passed through to the amenity encoding, so a comparison between encodings
             varies one parameter rather than one code path.
         vocabulary: Passed through for the ``"flags"`` scheme.
 

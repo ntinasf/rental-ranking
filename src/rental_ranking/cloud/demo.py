@@ -2,28 +2,19 @@
 
 The endpoint returns ``{"id": ..., "score": ..., "rank": ...}`` and nothing else, which is the
 right contract — a scoring service has no business shipping the ground truth back to its caller.
-But a screenshot of that response proves only that an endpoint existed. It shows an ordering with
-no way to tell a good one from a shuffle.
+But a screenshot of that proves only that an endpoint existed. This module is the other half: it
+builds the requests from real held-out listings and joins the response back to the **grades the
+model never saw**, so the ordering can be read against the truth.
 
-This module is the other half: it builds the requests from real held-out listings, and it joins
-the response back to the **grades the model never saw** so the ordering can be read against the
-truth. What a demonstration has to show is that the served model ranks *the same way the
-evaluated model ranks*, and that the ordering carries signal.
+* **Demo queries are chosen by a stated, label-blind rule** — the largest sealed-fold group under
+  30 listings in each city, ties to the lower group id (:data:`DEMO_QUERIES`). Never by score.
+* **Every demo query comes from the sealed fold**, held out of training, tuning and every
+  model-selection decision, so these orderings are out-of-sample.
+* **A single query's NDCG is an anecdote, not an estimate.** The number to cite is the
+  sealed-fold estimate over 72 groups; the per-query number is there so a reader can check the
+  ordering against the rows.
 
-Three things are deliberate:
-
-* **The demo queries are chosen by a stated, label-blind rule** — the largest sealed-fold group
-  under 30 listings in each city, ties to the lower group id (:data:`DEMO_QUERIES`). Never by
-  score. Picking the query after seeing its NDCG is the ranking equivalent of reporting the best
-  seed, and the trio this rule returns includes a mediocre one, which is the point.
-* **Every demo query comes from the sealed fold.** Fold 0 was held out of training, tuning and
-  every model-selection decision in Phase 3, so these orderings are out-of-sample.
-* **A single query's NDCG is an anecdote, not an estimate.** One group carries no interval worth
-  quoting. The number to cite is the sealed-fold estimate over 72 groups; the per-query number is
-  there so a reader can check the ordering against the rows, not to be quoted on its own.
-
-Layout follows ``cloud/sentiment.py``: pure functions, with the I/O and the network call confined
-to :func:`main`.
+Pure functions, with the I/O and the network call confined to :func:`main`.
 """
 
 from __future__ import annotations
@@ -141,8 +132,7 @@ def build_payload(
 
     Raises:
         ValueError: If ``features`` names a withheld column. The truth stays on this machine; a
-            request that carried ``grade`` would make the demonstration meaningless without
-            failing, which is the worst kind of bug to have in a demo.
+            request carrying ``grade`` would make the demonstration meaningless without failing.
     """
     leaked = sorted(set(features) & set(WITHHELD_COLUMNS))
     if leaked:
@@ -206,9 +196,8 @@ COUNTERFACTUAL_BLANKS: dict[str, Any] = {
 def perturb(payload: Mapping[str, Any], listing_id: str, changes: Mapping[str, Any]) -> dict:
     """A copy of ``payload`` with one listing's fields overwritten.
 
-    The counterfactual request. Sending the original and the perturbed body to the same endpoint
-    shows whether the ordering moves for a reason — a demonstration that a fixed ranking cannot
-    fake.
+    The counterfactual request: sending the original and the perturbed body to the same endpoint
+    shows whether the ordering moves for a reason.
 
     Raises:
         KeyError: If ``listing_id`` is not in the payload.
@@ -229,12 +218,10 @@ def blank_history(
 ) -> dict:
     """Every listing in the request with its review history removed — the cold-start query.
 
-    This is the request that shows the endpoint's *stated* behaviour on missing features: they
-    arrive as null, LightGBM routes them down a learned branch, and a ranking comes back. It is
-    also the request that shows the model's worst measured weakness, and the two facts belong in
-    the same screenshot: the service handles the case without error, and the ordering it produces
-    for cold-start listings is **worse than random** (5.8 % of deserving new listings reach the
-    top 10, against 9.6 % under a shuffle, measured 2026-08-18). Working is not the same as right.
+    Shows both halves of the missing-feature story: the nulls route down a learned branch and a
+    ranking comes back without error, and that ordering is **worse than a shuffle** for cold-start
+    listings — deserving never-reviewed listings reach the first screen less often than chance
+    alone would put them there.
     """
     return {
         **payload,
@@ -307,9 +294,8 @@ def query_quality(
 ) -> pd.Series:
     """NDCG@k of the endpoint's ordering against the two frozen baselines and the random floor.
 
-    Everything is computed on the **same candidate set**, so the comparison is like-for-like: the
-    baselines rank exactly the listings the endpoint was sent, which is the only way a single
-    query's numbers can be read against each other at all.
+    Everything is computed on the **same candidate set**: the baselines rank exactly the listings
+    the endpoint was sent, which is what makes the numbers comparable.
 
     Returns:
         A Series: ``endpoint``, ``baseline_reviews``, ``baseline_price_rating``, ``random``,
@@ -375,10 +361,9 @@ def endpoint_address() -> tuple[str, str]:
 def score_locally(payload: Mapping[str, Any]) -> dict:
     """Run the request through the scoring script in this process, with no endpoint involved.
 
-    Same ``init``/``run`` the container calls, same booster, same metadata — so this is the
-    reference the cloud response is diffed against. Two uses: the whole rendering path can be
-    checked before an instance is provisioned and starts billing, and after the demonstration a
-    reader can reproduce the screenshots without an Azure subscription.
+    Same ``init``/``run`` the container calls, same booster, same metadata, so this is the
+    reference the cloud response is diffed against — and it lets a reader reproduce the
+    screenshots with no Azure subscription and no billing instance.
     """
     os.environ.setdefault("AZUREML_MODEL_DIR", str(paths.SERVING_BUNDLE_DIR))
     if score._model is None:
@@ -389,9 +374,8 @@ def score_locally(payload: Mapping[str, Any]) -> dict:
 def invoke(uri: str, key: str, payload: Mapping[str, Any], timeout: int = 60) -> dict:
     """POST one request body to the endpoint and return the parsed response.
 
-    ``urllib`` rather than ``requests`` on purpose: ``requests`` is only present here as a
-    transitive dependency of the Azure SDK, and a demonstration script should not be the thing
-    that pins it.
+    ``urllib`` rather than ``requests``: the latter is only a transitive dependency of the Azure
+    SDK here, and a demonstration script should not be the thing that pins it.
     """
     request = urllib.request.Request(  # noqa: S310 — https URI from the workspace, not user input
         uri,
@@ -459,10 +443,8 @@ def ranked_table() -> pd.DataFrame:
 def sealed_table() -> pd.DataFrame:
     """Just the sealed fold — the only listings whose grades the served model never saw.
 
-    Read straight from the bundle when one is configured. The bundle is the sealed fold *already
-    resolved*, which is the whole point: the fold assignment is connected components over 44,684
-    rows and a container should not repeat it on every start to reach an answer that cannot
-    change.
+    Read straight from the bundle when one is configured: the bundle holds the sealed fold already
+    resolved, so a container does not repeat connected components on every start.
     """
     bundle = bundle_dir()
     if bundle is not None:
@@ -475,10 +457,8 @@ def group_listings(query_group: int) -> pd.DataFrame:
     """One query group's candidate set, sealed fold only.
 
     **Reads the sealed table, not the ranked one.** Everything that reports a number comes through
-    here, so this is the single point where a trained-on group is refused — and routing it through
-    ``sealed_table`` is also what lets it work from a bundle, where the rest of the population is
-    not present at all. Found by the container: the bundle path was wired into ``sealed_table``
-    and ``coverage`` while this function still reached past both for the feature table.
+    here, so this is the single point where a trained-on group is refused, and the only reason it
+    also works from a bundle, where the rest of the population is not present at all.
 
     Raises:
         KeyError: If the group is not in the sealed fold.
@@ -523,16 +503,13 @@ def search_index() -> pd.DataFrame:
     One row per ``(city, neighbourhood, room type, capacity tier)`` **in the sealed fold**,
     carrying the group those listings belong to and how wide that group turned out to be.
 
-    **Sealed only, and the gap is stated rather than filled.** A demonstration that offered the
-    whole population would have to show results for groups the model trained on, where the
-    ordering is a memory rather than a prediction. Those are not worth looking at, so the picker
-    does not offer them; :func:`coverage` reports what that costs and the console prints it.
+    Sealed only: offering the whole population would mean showing groups the model trained on,
+    where the ordering is a memory rather than a prediction. :func:`coverage` reports what that
+    restriction costs.
 
-    **The width columns are observed, not claimed.** ``neighbourhoods`` and ``tiers`` count what
-    the resolved group actually contains. A group with 12 neighbourhoods in it is one whose
-    original key was too thin to reach the minimum of 5 and was pooled at a coarser rung
-    (``groups.GROUP_CASCADE``) — so a guest who picks that neighbourhood is really competing
-    city-wide, and the console says so rather than implying the neighbourhood narrowed anything.
+    ``neighbourhoods`` and ``tiers`` count what the resolved group actually contains rather than
+    what the search asked for — a group spanning many neighbourhoods was pooled at a coarser rung
+    (``groups.GROUP_CASCADE``), so that search really competes city-wide.
     """
     sealed = sealed_table()
     width = sealed.groupby("query_group", observed=True).agg(
@@ -552,9 +529,8 @@ def search_index() -> pd.DataFrame:
 def tier_guest_choices() -> dict[str, list[int]]:
     """Party sizes to offer per capacity tier, derived from the bounds rather than restated.
 
-    A hand-written map would drift the first time ``CAPACITY_TIER_BOUNDS`` changed, and it would
-    drift silently: the console would offer a guest count that lands in a different tier than the
-    label above it says.
+    A hand-written map would drift silently the first time ``CAPACITY_TIER_BOUNDS`` changed,
+    offering a guest count that lands in a different tier than its label says.
     """
     bounds = groups.CAPACITY_TIER_BOUNDS
     labels = groups.CAPACITY_TIER_LABELS
@@ -576,7 +552,7 @@ def group_key(listings: pd.DataFrame) -> dict:
     """What one query group actually contains, in the terms a guest searched in.
 
     Observed rather than looked up: a group formed at a fallback rung spans several
-    neighbourhoods, and the only honest way to say which is to count them.
+    neighbourhoods, so the only honest way to say which is to count them.
     """
     neighbourhoods = listings["neighbourhood_cleansed"].unique()
     tiers = [str(tier) for tier in listings["capacity_tier"].unique()]
@@ -594,10 +570,9 @@ def coverage() -> dict:
     """What the sealed-only picker cannot offer, and why.
 
     The search is restricted to the held-out fold so every result carries an honest metric. The
-    cost is real and worth printing rather than hiding: the grouped split moves whole connected
-    components, a large neighbourhood *is* a large component, and so the largest neighbourhood in
-    each city tends to land in training entirely. Central Thessaloniki — 89 % of that city — is
-    the clearest case.
+    cost is worth printing rather than hiding: the grouped split moves whole connected components
+    and a large neighbourhood *is* a large component, so the largest neighbourhood in each city
+    tends to land in training entirely.
 
     Returns:
         Counts and the worst example per city, ready to render.
@@ -757,16 +732,15 @@ def _render(name: str, spec: dict, table: pd.DataFrame, quality: pd.Series, k: i
 def _capture(features: Sequence[str], send, source: str) -> str:
     """Run every demo query and variant and return the whole transcript as Markdown.
 
-    This is what survives the endpoint. Gotcha #6 says the deployment is deleted the same
-    session, so the committed evidence has to be written while it is still up — and it has to
-    carry the truth beside the ordering, or it proves only that a service answered.
+    This is what survives the endpoint: the deployment is deleted the same session, so the
+    committed evidence has to be written while it is still up, with the truth beside the ordering.
     """
     blocks = [
         "# Endpoint demonstration",
         "",
         f"Generated by `python -m rental_ranking.cloud.demo --capture` against **{source}**.",
         "Every query is a **sealed-fold** group: fold 0 was held out of training, tuning and every",
-        "model-selection decision in Phase 3.",
+        "model-selection decision.",
         "",
         "The queries were chosen by a label-blind rule — largest sealed group of at most 30",
         "listings in each city, ties to the lower group id — not by score. One of the three is",

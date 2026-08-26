@@ -1,45 +1,39 @@
 """Random search over LambdaMART hyperparameters, selected on paired out-of-fold NDCG.
 
-**The selection metric is the thing that matters here, not the optimiser.** Measured
-2026-08-18, the four development folds score the default configuration at 0.7026 / 0.7632 /
-0.7078 / 0.7119 — mean 0.7214, **sd 0.0281**, so the 4-fold mean carries a 95 % interval of
-+/- 0.0276. Real hyperparameter differences on this plateau are 0.005-0.015. Any scheme that
-picks a winner by comparing 4-fold means is picking noise, however clever the optimiser.
+**The selection metric matters here, not the optimiser.** The four development folds score one
+configuration with a spread wider than the real differences between configurations, which are on
+the order of 0.005-0.015. Any scheme that picks a winner by comparing 4-fold means is picking
+noise, however clever the optimiser.
 
-So configurations are compared on the **per-group out-of-fold vector** — one NDCG per
-development query group, 311 of them, every configuration evaluated on identically the same
-groups by identically the same folds — and ranked by the **paired** bootstrap difference against
-the default. Pairing is what makes the comparison possible: two similar configurations agree
-closely group by group, so differencing inside the resample removes most of the variance that
-swamps the unpaired levels.
+So configurations are compared on the **per-group out-of-fold vector** — one NDCG per development
+query group, every configuration evaluated on identically the same groups by identically the same
+folds — and ranked by the **paired** bootstrap difference against the default. Pairing is what
+makes the comparison possible: two similar configurations agree closely group by group, so
+differencing inside the resample removes most of the variance that swamps the unpaired levels.
 
-**Why random search and not Bayesian optimisation.** TPE's advantage is sample efficiency when
-an evaluation is expensive; ours costs about three minutes. Its assumption is that an observed
-score is informative about the configuration, and at this noise level it is not — TPE would
-converge confidently onto a lucky fold draw. Random search also produces the artefact the
-roadmap actually asks for: a table with the losers in it.
+**Random search rather than Bayesian optimisation.** TPE's advantage is sample efficiency when an
+evaluation is expensive; ours costs about three minutes. Its assumption is that an observed score
+is informative about the configuration, and at this noise level it is not — TPE would converge
+confidently onto a lucky fold draw. Random search also produces a table with the losers in it.
 
-**Why no early-termination policy.** Bandit, median-stopping and truncation-selection compare a
-trial's *intermediate* metric against its peers. A trial here is four fits pooled into one
-number — there is no trajectory to act on, pruning on a single fold would prune on sd 0.0281 of
-noise, and 35 trials take 90 minutes, so there is nothing to save. The per-trial termination
-that does belong is LightGBM's own early stopping, which every fit already uses.
+**No early-termination policy.** Bandit, median-stopping and truncation-selection compare a
+trial's *intermediate* metric against its peers; a trial here is four fits pooled into one number,
+so there is no trajectory to act on and pruning on a single fold would prune on noise. The
+per-trial termination that does belong is LightGBM's own early stopping, which every fit uses.
 
 What survives from that family is :data:`CATASTROPHE_MARGIN` — a guard, not a selection rule. A
 configuration is abandoned after its first fold only if it is **three standard deviations** below
 the best first fold seen, which catches a genuinely broken configuration and cannot plausibly
-discard a plateau winner. Pruned configurations stay in the results table marked ``pruned`` so it
+discard a plateau winner. Pruned configurations stay in the results table marked ``pruned``, so it
 remains a complete record.
 
-**The acceptance rule is declared before the search runs.** Keep the defaults unless the
-winner's paired interval against them excludes zero. "Tuning did not clear the noise floor" is a
-legitimate outcome and, given a ``best_iteration`` that ranged 158-718 while NDCG stayed inside a
-0.06 band, a likely one.
+**The acceptance rule is declared before the search runs.** Keep the defaults unless the winner's
+paired interval against them excludes zero. "Tuning did not clear the noise floor" is a legitimate
+outcome and, on a plateau this flat, a likely one.
 
-**The winner's out-of-fold gain is optimistically biased** — it is the maximum of ~35 draws, and
+**The winner's out-of-fold gain is optimistically biased** — it is the maximum of many draws, and
 the maximum of noise is positive. The sealed fold is the only unbiased measure of what tuning
-bought, and by declaration (2026-08-18) it is read exactly twice in this project: once for the
-defaults, once for the winner.
+bought, and it is read exactly twice: once for the defaults, once for the winner.
 """
 
 from collections.abc import Callable, Sequence

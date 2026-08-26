@@ -1,29 +1,19 @@
 """A local console for the ranking endpoint: edit a real listing, watch where it lands.
 
-The screenshots this project needs have to answer "does the model rank?", and a JSON body cannot
-answer it. This module serves a small page with the real category levels in dropdowns, seeded
-from a **real sealed-fold listing** inside its **real candidate set**, and renders the response
-against the **held-out grades**. Change a field, press re-rank, see the listing move.
+Serves a small page with the real category levels in dropdowns, seeded from a **real sealed-fold
+listing** inside its **real candidate set**, and renders the response against the **held-out
+grades**. Change a field, press re-rank, see the listing move. Starting from a real listing is
+what keeps the answer checkable: an invented row carries no grade, so its ranking cannot be
+judged.
 
-**Two design constraints, both about honesty rather than convenience.**
+``city`` and ``room_type`` are displayed but not editable — they are constant inside a query
+group by construction, so changing either would build a shared room competing inside an
+entire-homes search, a row the model was never asked to score.
 
-*It edits a real listing rather than composing one.* An invented row has no grade, so the ranking
-it produces cannot be checked — the most it can show is that the service responds. Starting from
-a listing that carries a true grade keeps the answer falsifiable, and keeps the other 22
-candidates and their grades intact around it.
-
-*The query-group key is displayed, not editable.* ``city`` and ``room_type`` are constant inside a
-query group by construction (docs/decisions_log.md, 2026-08-17: anything in the key is a
-conditioner, not a discriminator). A dropdown that changed either would build a shared room
-competing inside an entire-homes search — a row the model was never asked to score and whose
-answer means nothing.
-
-**The server is a proxy, not a nicety.** A browser cannot call the endpoint directly: managed
-online endpoints send no CORS headers, so the preflight fails, and putting the auth key in a page
-would leak a live credential to anything the browser loads. The key stays in this process.
-
-Standard library only — ``http.server`` and ``urllib``. A demonstration console is not a reason
-to add a web framework to a project whose only other server is somebody else's container.
+The server is a proxy rather than a nicety. A browser cannot call the endpoint directly (managed
+online endpoints send no CORS headers), and putting the auth key in the page would leak a live
+credential; the key stays in this process. Standard library only — ``http.server`` and
+``urllib``.
 
 Run it::
 
@@ -101,10 +91,8 @@ DEFAULT_PORT = 8000
 def preset_columns() -> set[str]:
     """Every column any preset touches. Must be a subset of the editable form — see the test.
 
-    The invariant matters because a preset writes into the *form* and the form is what gets sent.
-    A preset naming a field the form does not render would silently drop that field: the page
-    would show one edit and the endpoint would receive another, and the rank move would be
-    attributed to the wrong change.
+    A preset writes into the form and the form is what gets sent, so a preset naming a field the
+    form does not render would silently drop that edit.
     """
     named = {column for edits in PRESETS.values() for column in edits}
     return named | {"price"}  # "double the price" resolves per listing, so it is not in the map
@@ -155,8 +143,7 @@ def preset_edits(name: str, listing: Mapping[str, Any]) -> dict[str, Any]:
     """The edit map for a named preset, resolved against the listing it applies to.
 
     Raises:
-        KeyError: If the preset is unknown. The page only offers names from :data:`PRESETS`, so
-            an unknown one means a hand-made request, and guessing at it would be worse.
+        KeyError: If the preset is unknown; the page only offers names from :data:`PRESETS`.
     """
     if name not in PRESETS:
         raise KeyError(f"unknown preset {name!r}; known: {sorted(PRESETS)}")
@@ -169,9 +156,8 @@ def preset_edits(name: str, listing: Mapping[str, Any]) -> dict[str, Any]:
 def coerce_edits(edits: Mapping[str, Any], spec: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     """Turn the form's strings back into the types the endpoint expects.
 
-    An empty box becomes ``null``, which is a real answer — the caller is saying the listing has
-    no value for that field — and not an error. A box that cannot be read as a number raises here
-    rather than travelling to the endpoint to fail there.
+    An empty box becomes ``null`` — the caller saying the listing has no value for that field,
+    which is a real answer rather than an error.
 
     Raises:
         ValueError: If a numeric field holds something that is not a number, or a choice field
@@ -219,8 +205,8 @@ def ranking_view(
 ) -> dict:
     """The response, the truth beside it, and the movement — everything the page draws.
 
-    Every group reaching here is from the sealed fold — :func:`demo.group_listings` refuses the
-    rest — so every metric in the payload is out-of-sample.
+    Every group reaching here is from the sealed fold (:func:`demo.group_listings` refuses the
+    rest), so every metric in the payload is out-of-sample.
 
     Args:
         response: The ranking under the current edits.
@@ -621,9 +607,8 @@ $("listing").onchange = e =>
 class _Session:
     """Per-query-group state, built once and reused.
 
-    Resolving a group means reading the feature table and recomputing the fold assignment, which
-    runs connected components over 44,684 rows. Doing that per click would make the console feel
-    like the model is slow when the model is not involved.
+    Resolving a group recomputes the fold assignment, which runs connected components over 44,684
+    rows — per click that would make the console feel slow when the model is not involved.
     """
 
     def __init__(self, features: Sequence[str], metadata: Mapping[str, Any], send) -> None:

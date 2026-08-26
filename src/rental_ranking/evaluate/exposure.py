@@ -1,30 +1,25 @@
 """What changes when the candidate set widens: composition, geographic spread, cohort reach.
 
-This module exists for one experiment — the large-area search design in
-``docs/ab_test_design.md`` — and for one methodological rule.
-
 **Never compare NDCG across grouping schemes.** Changing the query-group key changes the candidate
-set, the ideal DCG and the random floor all at once, so the metric is a *different quantity* at
-each rung of ``groups.GROUP_CASCADE``. The coarsest rung, ``city x room_type``, is the grading
-partition itself, which means its within-group grade distribution is fixed by construction — a
-model could get "better NDCG" there by doing nothing at all. Any table putting a rung-1 NDCG beside
-a rung-3 NDCG is comparing two things that share a name.
+set, the ideal DCG and the random floor at once, so the metric is a *different quantity* at each
+rung of ``groups.GROUP_CASCADE``. The coarsest rung is the grading partition itself, where the
+within-group grade distribution is fixed by construction — a model could get "better NDCG" there
+by doing nothing at all.
 
 So this module measures **composition and exposure** instead: how large the candidate set becomes,
 how many neighbourhoods survive into the top *k*, and what share of a cohort reaches it. Those are
-defined identically regardless of grouping, which is exactly what makes them comparable.
+defined identically regardless of grouping, which is what makes them comparable.
 
-Two further precisions:
+Two precisions:
 
 * The re-keyings here are **plain groupbys on a cascade rung, not the cascade's output.**
-  ``groups.query_group`` falls back only for groups under the minimum; this asks the counterfactual
-  question "what if the key had been this all along", which is the treatment arm the design
-  document proposes.
+  ``groups.query_group`` falls back only for groups under the minimum; this asks the
+  counterfactual "what if the key had been this all along".
 * The random reference for :func:`cohort_reach` is **analytic, not simulated.** Under a uniform
-  shuffle the chance a given listing lands in the top *k* of a group of *n* is exactly
-  ``min(k, n) / n``, so there is nothing to estimate and no seed to choose.
+  shuffle the chance a listing lands in the top *k* of a group of *n* is exactly ``min(k, n) / n``,
+  so there is nothing to estimate and no seed to choose.
 
-Pure transforms, as everywhere else in ``evaluate/``; :func:`main` is the only I/O.
+Pure transforms; :func:`main` is the only I/O.
 """
 
 from __future__ import annotations
@@ -53,9 +48,9 @@ def candidate_set_profile(
 ) -> pd.DataFrame:
     """How large one search's candidate set becomes at each rung of the key.
 
-    The serving question, not the modelling one. ``cap`` is imported from the scoring script rather
-    than restated, because the two must not drift: a rung whose largest group exceeds it describes
-    a ranking the deployed endpoint would refuse.
+    The serving question, not the modelling one. ``cap`` is imported from the scoring script
+    rather than restated: a rung whose largest group exceeds it describes a ranking the deployed
+    endpoint would refuse.
 
     Args:
         listings: The ranked population. ``capacity_tier`` is derived here rather than read, for
@@ -97,10 +92,9 @@ def _normalised_entropy(counts: np.ndarray, available: int, slots: int) -> float
     only one geography was available, because there is then nothing to spread and a number would
     imply otherwise.
 
-    **The denominator is what was available, not what appeared.** Normalising by the observed count
-    makes a top-k that collapsed onto a single neighbourhood undefined instead of zero — that is,
-    it silently erases the exact failure this metric exists to detect. Caught by
-    ``tests/test_exposure.py`` before the number reached the document.
+    **The denominator is what was available, not what appeared.** Normalising by the observed
+    count would make a top-k that collapsed onto a single neighbourhood undefined instead of zero,
+    silently erasing the exact failure this metric exists to detect.
     """
     reachable = min(slots, available)
     if reachable <= 1:
@@ -171,9 +165,9 @@ def cohort_reach(
 ) -> pd.Series:
     """What share of a cohort reaches the first screen, against what a shuffle would give it.
 
-    Generalises the cold-start finding of 2026-08-18 — deserving never-reviewed listings reach the
-    top 10 at 5.8 % against a shuffle's 9.6 % — so the same question can be asked of any cohort
-    under any grouping.
+    Generalises the cold-start finding — deserving never-reviewed listings reach the top ``k``
+    less often than a shuffle would put them there — so the same question can be asked of any
+    cohort under any grouping.
 
     **The reference is exact, not simulated.** Under a uniform shuffle a listing in a group of
     ``n`` reaches the top ``k`` with probability ``min(k, n) / n``, so the cohort's expected reach
@@ -221,7 +215,7 @@ def rung_labels(listings: pd.DataFrame, key: Sequence[str]) -> pd.Series:
     """Group ids from a **plain re-keying** at one cascade rung — no minimum, no fallback.
 
     ``groups.query_group`` widens the key only for groups below the minimum. This answers the
-    counterfactual the design document needs instead: what if the key had been this for everyone?
+    counterfactual instead: what if the key had been this for everyone?
 
     Raises:
         KeyError: If a key column is missing.
@@ -237,11 +231,10 @@ def rung_labels(listings: pd.DataFrame, key: Sequence[str]) -> pd.Series:
 def _sealed_scores(sealed: pd.DataFrame) -> pd.Series:
     """Score the sealed fold with the served booster.
 
-    **This is not a third read of the holdout.** The project declared two performance reads and
-    spent both (docs/decisions_log.md, 2026-08-18). Nothing here computes NDCG, a paired
-    difference or any comparison against a baseline; the sealed fold is used because it is the only
-    population the refit model did not fit, and scoring the development folds with it would make
-    every exposure number optimistic. Composition is read, quality is not.
+    **This is not a third read of the holdout.** Nothing here computes NDCG, a paired difference
+    or any comparison against a baseline. The sealed fold is used because it is the only population
+    the refit model did not fit, and scoring the development folds would make every exposure number
+    optimistic. Composition is read, quality is not.
     """
     import lightgbm as lgb
 
@@ -336,9 +329,9 @@ def demand_prior(
 ) -> pd.Series:
     """Historical demand per neighbourhood, for choosing where to look before ranking.
 
-    The stand-in for a personalised destination model: with no user signal, the best available
-    guess at where a guest should be shown listings is where listings have historically been in
-    demand. It is a **prior over geographies**, not a feature — no listing sees it.
+    The stand-in for a personalised destination model: with no user signal, the best guess at
+    where a guest should be shown listings is where listings have historically been in demand. A
+    **prior over geographies**, not a feature — no listing sees it.
 
     **Fit this on training data only.** It is derived from the target, so a prior fitted on the
     population it will be evaluated against leaks the answer into the arm being measured.
@@ -405,10 +398,8 @@ def screen_composition(
     """What the first screen contains — the one thing that *is* comparable across policies.
 
     **This is why there is no NDCG here.** NDCG normalises by the candidate set, so it changes
-    meaning the moment the set changes and cannot compare two retrieval policies. The first screen
-    is *k* listings under either policy, so its composition is unnormalised and directly
-    comparable: the same question a guest would ask, which is whether the ten things in front of
-    them are any good.
+    meaning the moment the set changes. The first screen is *k* listings under either policy, so
+    its composition is directly comparable — the question a guest would ask.
 
     Returns:
         One row per group: ``shown``, ``mean_grade``, ``relevant_share`` (grade >= 3),

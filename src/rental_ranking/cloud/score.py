@@ -1,25 +1,8 @@
 """Scoring script for the managed online endpoint: a candidate set in, a ranked list out.
 
-**A ranker's endpoint is not a predictor's endpoint.** A regression model scores rows
-independently and the caller may do what it likes with the numbers. A ranker's score is
-**uncalibrated**: it is not a probability, its scale is arbitrary, and no threshold on it means
-anything. So the contract here takes a **candidate set** — the listings competing in one search —
-and returns them **ordered**, with their scores attached but the ordering already applied.
-Returning bare numbers would invite a caller to threshold them, or to read a gap between two of
-them as a magnitude, and neither is supported.
-
-*Corrected 2026-08-22.* This docstring previously went further and said that "comparing scores
-across two different searches is meaningless" — the ordering contract was right, the reason given
-for it was not. **Calibration and comparability are different properties**, and ordering two
-listings needs only a monotone common function, not a calibrated one. The booster takes no
-query-group input, so there is no per-group parameter that could differ between searches; the
-lambdarank objective merely leaves cross-group ordering *unconstrained*, which is not the same as
-destroying it. Measured out-of-fold, ordering listings from different neighbourhoods is
-indistinguishable from ordering listings inside one group — paired difference **-0.0016**, 95 %
-CI [-0.0122, +0.0092] over 54 cells (``evaluate/comparability.py``). A caller may therefore hand
-this endpoint a **broad candidate set spanning neighbourhoods** and trust the ordering, within
-one city and room type. Across cities or room types the question is not merely unmeasured but
-undefined here, since the grades come from different partitions.
+A ranker's score is uncalibrated — it is not a probability and no threshold on it means anything —
+so the contract takes a **candidate set**, the listings competing in one search, and returns them
+**ordered**, with the scores attached but the ordering already applied.
 
 **Input** (one query)::
 
@@ -30,16 +13,13 @@ undefined here, since the grades come from different partitions.
     {"ranked": [{"id": "abc123", "score": 1.83, "rank": 1}, ...],
      "n_listings": 23, "n_features_supplied": 61}
 
-Missing features are allowed and become NaN — LightGBM routes missing values down a learned
-branch, and a caller who has no review scores for a brand-new listing is describing a real state
-of the world rather than making an error. **Unknown categorical levels are not allowed**: they
-would be coerced to NaN and scored as "missing" rather than rejected, which is a wrong answer
-wearing the costume of a valid one.
+Missing features are allowed and become NaN, which LightGBM routes down a learned branch. Unknown
+categorical levels are rejected: coercing them to NaN would score them as "missing" rather than
+fail, which is a wrong answer wearing the costume of a valid one.
 
-This is a **custom scoring script rather than a no-code MLflow deployment**, for three reasons:
-no-code returns raw predictions in input order (not a ranked list with ids), it gives no place to
-validate a request, and the MLflow signature cannot express the five `category` columns anyway —
-see ``lambdamart.serving_metadata`` for why those are a silent-wrong-answer risk.
+A custom script rather than a no-code MLflow deployment, because no-code returns raw predictions
+in input order, gives no place to validate a request, and cannot express the five ``category``
+columns (see ``lambdamart.serving_metadata``).
 
 Azure ML calls :func:`init` once per worker and :func:`run` per request.
 """
@@ -59,20 +39,19 @@ import pandas as pd
 # into /var/azureml-app/<dir> and puts only the *script's own* directory on sys.path, so
 # `import rental_ranking...` raises ModuleNotFoundError at request time — after init() has
 # succeeded and the container reports healthy. Caught by the local Docker smoke test, which is
-# precisely why the roadmap puts one before the deployment that costs money.
+# why one runs before the deployment that costs money.
 _PACKAGE_ROOT = Path(__file__).resolve().parents[2]
 if str(_PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(_PACKAGE_ROOT))
 
 from rental_ranking.train.lambdamart import restore_dtypes  # noqa: E402 — needs the path above
 
-#: Ceiling on one request. A query group in this project reaches 2,088 listings, so the cap is
-#: set above that; it exists to bound the work a single call can demand, not to reject real
-#: searches.
+#: Ceiling on one request, set above the largest query group (2,088 listings). It bounds the work
+#: a single call can demand, not real searches.
 MAX_LISTINGS = 5_000
 
-#: Field every listing must carry, so the response can be joined back to whatever the caller
-#: holds. It is an identifier, never a feature.
+#: Field every listing must carry, so the response can be joined back to the caller's rows. An
+#: identifier, never a feature.
 ID_FIELD = "id"
 
 _logger = logging.getLogger(__name__)
@@ -105,10 +84,10 @@ def init() -> None:
 
 
 def _validate(payload: object) -> list[dict]:
-    """Check the request and return its listings, or raise ``ValueError`` with a usable message.
+    """Check the request and return its listings.
 
-    Every message names what was wrong *and* what was expected. An endpoint that answers "400"
-    and nothing else makes the caller guess.
+    Raises:
+        ValueError: With a message naming what was wrong and what was expected.
     """
     if not isinstance(payload, dict):
         raise ValueError(f"body must be a JSON object, got {type(payload).__name__}")

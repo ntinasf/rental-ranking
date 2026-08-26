@@ -1,42 +1,33 @@
 """Amenity canonicalisation and the concept-bucket map.
 
-`amenities` arrives from the processed layer as a parsed list of strings, never null. Across the
-ranked population it holds **7,029 distinct strings**, and **93 % of them appear in fewer than
-0.1 % of listings** — a vocabulary dominated by an unbounded tail of subtype and brand variants
-("43 inch HDTV with Netflix", "Bosch refrigerator", "Private outdoor pool - available
-seasonally, open 24 hours, heated"). One-hot is impossible and a per-string dictionary is
-brittle: it scores "Fast wifi - 500 Mbps" as zero because the string is not "Wifi".
+``amenities`` arrives from the processed layer as a parsed list of strings, never null. Across the
+ranked population it holds **7,029 distinct strings**, 93 % of them in fewer than 0.1 % of
+listings — a vocabulary dominated by subtype and brand variants ("43 inch HDTV with Netflix",
+"Bosch refrigerator"). One-hot is impossible, and a per-string dictionary is brittle: it scores
+"Fast wifi - 500 Mbps" as zero because the string is not "Wifi".
 
 So this module does two things and stops. It **canonicalises** a raw string, and it maps the
 canonical form to one of a small set of **concept buckets** by ordered keyword rules. Building
-features from the buckets — counts, flags, whatever the comparison decides — belongs to the
-caller.
+features from the buckets belongs to the caller.
 
-**Why buckets rather than a weighted score.** The obvious alternative is a hand-built dictionary
-giving each amenity a "convenience" weight and summing it. It was rejected for two reasons, one
-measured and one structural. Measured: **rarity is not value**, so no frequency-derived
-weighting can stand in for judgement — "Body soap" (49.5 %) is *rarer* than "Air conditioning"
-(70.6 %), and ranking the vocabulary by frequency puts "Hangers" (85.1 %) above air
-conditioning, which is exactly the inversion a value weighting exists to fix. Structural: a
-cardinal scale asks its author to defend fifty numbers, while a partition asks only that
-"parking is a category of convenience", and a gradient-boosted ranker learns weights over a
-dozen bucket counts far better than a human assigns them. **Assert the partition; let the model
-assert the weights.**
+**Buckets rather than a weighted score.** A hand-built dictionary of per-amenity "convenience"
+weights fails on both counts: **rarity is not value**, so no frequency-derived weighting can
+stand in for judgement ("Body soap" at 49.5 % is rarer than "Air conditioning" at 70.6 %), and a
+cardinal scale asks its author to defend fifty numbers where a partition asks only that "parking
+is a category of convenience". **Assert the partition; let the model assert the weights.**
 
-**The map is built blind to the label**, from the vocabulary and its prevalence alone. That is
-what separates it from target encoding, which is forbidden here (docs/decisions_log.md). Nothing
-in this file may ever be tuned against an evaluation score — a dictionary fitted by watching
-NDCG is target encoding performed through the author's eyes, and no test in this repo would
+**The map is built blind to the label**, from the vocabulary and its prevalence alone, and
+nothing in this file may ever be tuned against an evaluation score — a dictionary fitted by
+watching NDCG is target encoding performed through the author's eyes, and no test here would
 catch it.
 
-**Rule order is load-bearing**, because the vocabulary sets traps for substring matching:
-"Pool table" is a game, "Pool view" is a view, and "Outdoor kitchen" is a villa feature rather
-than a kitchen appliance. The first matching rule wins, so the traps are resolved by listing
-the specific bucket before the general one. :func:`bucket_of` returns ``None`` for anything
-unmatched rather than inventing an "other" bucket — an unmatched string is a gap in the map,
-and it should be visible as one.
+**Rule order is load-bearing**, because the vocabulary sets traps for substring matching: "Pool
+table" is a game, "Pool view" is a view, and "Outdoor kitchen" is a villa feature rather than a
+kitchen appliance. The first matching rule wins, so the specific bucket is listed before the
+general one. :func:`bucket_of` returns ``None`` for anything unmatched rather than inventing an
+"other" bucket — an unmatched string is a gap in the map and should be visible as one.
 
-Convention, matching ``rental_ranking.data``: pure functions, no I/O and no ``main()``.
+Pure functions, no I/O and no ``main()``.
 """
 
 import re
@@ -261,9 +252,8 @@ AMENITY_BUCKETS: tuple[tuple[str, tuple[str, ...]], ...] = (
 #: Bucket names in map order, for building a stable column set.
 BUCKET_NAMES: tuple[str, ...] = tuple(name for name, _ in AMENITY_BUCKETS)
 
-#: The top 50 amenities by **frequency**, fitted once on the ranked population (2026-08-17) and
-#: pinned so the feature set does not depend on the split. The roadmap's original plan, and the
-#: encoding the bake-off has to beat rather than the one it assumes.
+#: The top 50 amenities by **frequency**, fitted once on the ranked population and pinned so the
+#: feature set does not depend on the split.
 FREQUENCY_TOP_50: tuple[str, ...] = (
     "Wifi",
     "Hair dryer",
@@ -317,14 +307,11 @@ FREQUENCY_TOP_50: tuple[str, ...] = (
     "Crib",
 )
 
-#: The top 50 by **mean within-query-group variance**, same population and date. The criterion
-#: matched to the objective: a pairwise ranker can only learn from variation inside a group.
+#: The top 50 by **mean within-query-group variance**, same population. The criterion matched to
+#: the objective: a pairwise ranker can only learn from variation inside a group.
 #:
-#: Measured, the two lists **overlap in 44 of 50** — so at k = 50 the criterion is close to a
-#: tie, and the difference the bake-off is testing is narrow. It bites hardest at small k, where
-#: frequency spends the whole budget on commodity (the top 20 by frequency are all present in
-#: over 57 % of listings). Kept as a candidate because it is nearly free, not because it is
-#: expected to win by much.
+#: The two lists overlap in 44 of 50, so at k = 50 the choice is close to a tie. It bites hardest
+#: at small k, where frequency spends the whole budget on commodity.
 VARIANCE_TOP_50: tuple[str, ...] = (
     "Heating",
     "Body soap",
@@ -436,18 +423,16 @@ def fit_vocabulary(
 ) -> list[str]:
     """Select the ``k`` amenities a flag encoding should carry, **to be pinned as a constant**.
 
-    Fitting at training time would make the feature set depend on the split, so the intended
-    use is: run this once on the ranked population, paste the result into a constant, and pass
-    that constant to :func:`amenity_features` forever after. It is label-free either way — both
-    criteria read only the amenity lists — so this is not target encoding, and the reason to
-    pin is reproducibility rather than leakage.
+    Fitting at training time would make the feature set depend on the split, so the intended use
+    is: run this once on the ranked population, paste the result into a constant, and pass that
+    constant to :func:`amenity_features` afterwards. Both criteria read only the amenity lists, so
+    the reason to pin is reproducibility rather than leakage.
 
     Two criteria, because the obvious one is wrong for a ranker:
 
-    * ``"frequency"`` — the most common amenities. This is the roadmap's original plan and the
-      encoding the bake-off has to beat. Its weakness is measurable: the top of the vocabulary
-      is commodity (Wifi 92.5 %, Hair dryer 89.9 %, Hangers 85.1 %), so a flag block spends its
-      budget on amenities almost every listing has.
+    * ``"frequency"`` — the most common amenities. Its weakness is measurable: the top of the
+      vocabulary is commodity (Wifi 92.5 %, Hair dryer 89.9 %), so a flag block spends its budget
+      on amenities almost every listing has.
     * ``"within_group_variance"`` — mean variance of the flag *inside* a query group, which is
       the only variation LambdaMART can learn from: a pair is only ever compared against
       another member of its own group. An amenity every listing in a group shares contributes
@@ -500,19 +485,16 @@ def amenity_features(
 ) -> pd.DataFrame:
     """Build the amenity feature block under one of the candidate encodings.
 
-    The scheme is a **parameter rather than a fork in the code** so the Phase 3 comparison
-    varies exactly one thing and cannot drift between variants — the same reason
-    ``assign_grades`` takes ``partition_cols``. The candidates, decided 2026-08-17:
+    The scheme is a **parameter rather than a fork in the code**, so a comparison between
+    encodings varies exactly one thing and cannot drift between variants. The candidates:
 
-    * ``"buckets"`` — one **count** per concept bucket. The default. Counts rather than flags,
-      because 8 of the 19 buckets are near-universal on presence (connectivity_work 99.2 %,
-      air_conditioning 98.7 %, kitchen 98.2 %) where a flag is dead weight, while the count
-      inside the bucket still varies. A count also subsumes a flag: a tree recovers presence
-      by splitting at zero.
+    * ``"buckets"`` — one **count** per concept bucket, the default. Counts rather than flags,
+      because 8 of the 19 buckets are near-universal on presence, where a flag is dead weight
+      while the count inside the bucket still varies. A count also subsumes a flag: a tree
+      recovers presence by splitting at zero.
     * ``"count"`` — ``amenity_count`` alone. The honest baseline, and not a naive one: it
-      correlates +0.244 with the label overall and +0.134 within query group, the same order as
-      the review signals. If the bucket block cannot beat it, the buckets were encoding
-      listing verbosity.
+      correlates with the label at the same order as the review signals. If the bucket block
+      cannot beat it, the buckets were encoding listing verbosity.
     * ``"flags"`` — one binary per amenity in ``vocabulary``, which must be pinned; see
       :func:`fit_vocabulary`.
 

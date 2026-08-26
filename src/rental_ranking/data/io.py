@@ -1,19 +1,15 @@
 """Read raw snapshot files with their ID dtypes pinned.
 
-The only module that reads from ``data/raw/``, and the counterpart to ``download.py``: that
-one writes the layout, this one reads it. Both derive the filename from the same URL in
-``SNAPSHOTS`` rather than spelling it out, so the reader cannot drift from the writer — the
-British/American ``neighbourhoods`` split is exactly the bug that arrangement prevents.
+The only module that reads ``data/raw/``, and the counterpart to ``download.py``: both derive
+the filename from the same URL in ``SNAPSHOTS``, so the reader cannot drift from the writer.
+Writing is not here — ``data/processed/`` is written once by the orchestrator at the end of the
+run.
 
-Pinning dtypes is this module's real job, not the path convenience. A hashed ID must not
-depend on how pandas happened to infer a column: one null widens an int64 column to float64,
-``str(12345.0)`` hashes differently from ``str(12345)``, and the calendar/listings join then
-returns nothing with no error anywhere. Reading IDs as ``int64`` rather than nullable
-``Int64`` is deliberate — ``int64`` *raises* on a null, which is the failure we want.
-
-Writing is not here. ``data/processed/`` is written once, by the orchestrator, at the end of
-the run; a module that both reads raw and writes processed would invite loading a
-half-finished layer.
+Pinning dtypes is this module's real job. A hashed ID must not depend on how pandas inferred a
+column: one null widens int64 to float64, ``str(12345.0)`` hashes differently from
+``str(12345)``, and the calendar/listings join then returns nothing with no error anywhere.
+IDs are read as ``int64`` rather than nullable ``Int64`` on purpose — ``int64`` raises on a
+null, which is the failure we want.
 """
 
 from pathlib import Path
@@ -29,14 +25,14 @@ from rental_ranking.data.validate import require_columns
 #: The four files downloaded per city snapshot.
 Entity = Literal["listings", "calendar", "reviews", "neighbourhoods"]
 
-#: Columns read at a fixed dtype, per entity. Everything else is left to pandas' inference —
-#: only the join keys and the identifiers whose text form carries meaning are pinned.
+#: Columns read at a fixed dtype: the join keys and the identifiers whose text form carries
+#: meaning. Everything else is left to pandas' inference.
 #:
 #: - ``id`` / ``host_id`` / ``listing_id``: hashed downstream, so their string form must be
-#:   stable. Athens listing IDs reach 1.7e18, past 2**53, so a float column has already lost
-#:   precision by the time anything can check it.
-#: - ``license``: 12,464 Athens values carry leading zeros ("00000364602"). Numeric inference
-#:   silently turns that into 364602 — a different licence, and a corrupted operator signal.
+#:   stable. Listing IDs reach 1.7e18, past 2**53, so a float column has already lost precision
+#:   by the time anything can check it.
+#: - ``license``: values carry leading zeros ("00000364602"), which numeric inference turns into
+#:   a different licence and a corrupted operator signal.
 _DTYPES: dict[str, dict[str, str]] = {
     "listings": {"id": "int64", "host_id": "int64", "license": "string"},
     "calendar": {"listing_id": "int64"},
@@ -44,17 +40,17 @@ _DTYPES: dict[str, dict[str, str]] = {
     "neighbourhoods": {},
 }
 
-# The entity names live in three places that must agree: the type, the dtype table, and the
-# URL table in download.py. Checking at import turns a drift into a startup failure instead
-# of a KeyError somewhere down the call stack.
+# The entity names live in three places that must agree: the type, the dtype table, and the URL
+# table in download.py. Checking at import turns a drift into a startup failure rather than a
+# KeyError somewhere down the call stack.
 assert set(get_args(Entity)) == set(_DTYPES), "Entity and _DTYPES disagree"
 
 
 def raw_path(city: str, entity: Entity) -> Path:
     """Return the on-disk path of one raw snapshot file.
 
-    The filename is taken from the basename of the download URL, the same rule
-    ``download.py`` applies when writing, so the two cannot disagree.
+    The filename is the basename of the download URL, the same rule ``download.py`` applies when
+    writing, so the two cannot disagree.
 
     Args:
         city: Market key, as used in ``SNAPSHOTS``.
@@ -84,8 +80,7 @@ def load_raw(city: str, entity: Entity) -> pd.DataFrame:
         entity: Which of the four snapshot files.
 
     Returns:
-        The raw frame, untouched apart from the pinned dtypes. Anonymization and cleaning
-        are separate steps.
+        The raw frame, untouched apart from the pinned dtypes.
 
     Raises:
         ValueError: If ``city`` or ``entity`` is unknown.

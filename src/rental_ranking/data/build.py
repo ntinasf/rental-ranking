@@ -1,21 +1,17 @@
 """Orchestrate the raw → processed pipeline: the only module that writes ``data/processed/``.
 
-Everything upstream is a pure transform; this is where they get chained, where the filesystem
-is touched, and where the checks that need *more than one frame* live. Per the contract,
-preprocessing runs locally and produces a local artifact — Azure registers the raw layer and
-the Phase 2 feature table, never this intermediate. A Phase 3 ``prep → train`` pipeline YAML,
-if it is ever wanted, calls ``python -m rental_ranking.data.build`` and holds no logic itself.
+Everything upstream is a pure transform; this is where they are chained, where the filesystem is
+touched, and where the checks that need *more than one frame* live:
 
-Two checks belong here and nowhere else, because a single-entity transform cannot see them:
-
-- **Schema equality across cities before concat.** Column drift between Inside Airbnb city
-  files is a known failure, and ``pd.concat`` would paper over it by unioning columns and
-  filling the gaps with nulls — a silently wider table rather than an error.
+- **Schema equality across cities before concat.** Column drift between Inside Airbnb city files
+  is a known failure, and ``pd.concat`` would paper over it by unioning columns and filling the
+  gaps with nulls — a silently wider table rather than an error.
 - **Join integrity after hashing.** Salt or dtype trouble upstream shows up nowhere else: the
   frames all look fine individually and every join downstream just returns nothing.
 
 Entities are processed one at a time and released, so the 17M-row calendar is never resident
-alongside the other two.
+alongside the other two. Preprocessing runs locally and produces a local artifact; a pipeline
+job that wanted this step would call ``python -m rental_ranking.data.build`` and hold no logic.
 """
 
 import os
@@ -32,8 +28,8 @@ from rental_ranking.data.paths import PROCESSED_DIR
 
 CITIES: tuple[str, ...] = tuple(SNAPSHOTS)
 
-#: The entities that reach ``data/processed/``. ``neighbourhoods`` is loadable but is a
-#: lookup table for the notebook, not a modelling entity, so it is not concatenated.
+#: The entities that reach ``data/processed/``. ``neighbourhoods`` is loadable but is a lookup
+#: table, not a modelling entity, so it is not concatenated.
 ProcessedEntity = Literal["listings", "calendar", "reviews"]
 
 PROCESSED_ENTITIES: tuple[ProcessedEntity, ...] = get_args(ProcessedEntity)
@@ -41,18 +37,16 @@ PROCESSED_ENTITIES: tuple[ProcessedEntity, ...] = get_args(ProcessedEntity)
 # Narrower than `Entity`, so every processed entity must also be a loadable one.
 assert set(PROCESSED_ENTITIES) <= set(get_args(Entity)), "PROCESSED_ENTITIES is not loadable"
 
-#: Below this share of child rows resolving to a listing, the run fails instead of warning.
-#: The threshold separates two situations that are orders of magnitude apart, not a quality
-#: bar: real orphans are ~0.0002% of rows (5 known Athens ids), while a salt mismatch or an
-#: unpinned ID dtype resolves *nothing*. Anything in between is a bug worth stopping for.
+#: Below this share of child rows resolving to a listing, the run fails instead of warning. Not a
+#: quality bar: real orphans are ~0.0002 % of rows, while a salt mismatch or an unpinned ID dtype
+#: resolves *nothing*. Anything in between is a bug worth stopping for.
 _MIN_JOIN_RESOLUTION = 0.99
 
 
 def _resolve_salt() -> str:
     """Read ``ANON_SALT`` up front so a missing salt fails before any file is read.
 
-    ``anonymize`` would raise on its own, but only after the first CSV is parsed. Checking
-    here costs nothing and turns a late failure into an immediate one.
+    ``anonymize`` would raise on its own, but only after the first CSV is parsed.
 
     Returns:
         The salt.
@@ -72,10 +66,8 @@ def _resolve_salt() -> str:
 def prepare(city: str, entity: ProcessedEntity, salt: str) -> pd.DataFrame:
     """Load one city-entity file and run it through anonymization and cleaning.
 
-    The one place entity-specific wiring lives. A dispatch inside a *library* transform would
-    be wrong — the three entities do genuinely different work, and a router there makes the
-    signature dishonest — but the orchestrator is exactly where knowing which function goes
-    with which entity belongs.
+    The one place entity-specific wiring lives: the transforms themselves take a frame and return
+    a frame, and knowing which function goes with which entity belongs to the orchestrator.
 
     Args:
         city: Market key.
@@ -101,10 +93,9 @@ def prepare(city: str, entity: ProcessedEntity, salt: str) -> pd.DataFrame:
 def concat_cities(frames: dict[str, pd.DataFrame], entity: ProcessedEntity) -> pd.DataFrame:
     """Assert every city's schema matches, then concatenate.
 
-    Raises rather than asserts: ``assert`` is stripped under ``python -O``, and the contract
-    calls column drift a known Inside Airbnb gotcha that must fail loudly. The message names
-    the offending city and the symmetric difference, because "schemas differ" on a 58-column
-    table is not a debuggable error.
+    Raises rather than asserts — ``assert`` is stripped under ``python -O``. The message names the
+    offending city and the symmetric difference, because "schemas differ" on a 58-column table is
+    not a debuggable error.
 
     Args:
         frames: City name → prepared frame. Insertion order is preserved in the output.
@@ -135,10 +126,10 @@ def concat_cities(frames: dict[str, pd.DataFrame], entity: ProcessedEntity) -> p
 def check_ids_unique_across_cities(ids_by_city: dict[str, set[str]]) -> None:
     """Verify no hashed listing id appears in two cities.
 
-    Two distinct listings sharing a digest would silently merge in every downstream join, and
-    a 12-hex truncation makes that a real if small risk (~1e-4 at this scale). Comparing the
-    summed sizes against the size of the union states "pairwise disjoint" directly, without
-    materialising every pairwise intersection.
+    Two distinct listings sharing a digest would silently merge in every downstream join, and the
+    12-hex truncation makes that a small but real risk (~1e-4 at this scale). Comparing the summed
+    sizes against the size of the union states "pairwise disjoint" without materialising every
+    pairwise intersection.
 
     Args:
         ids_by_city: Market → the set of hashed listing ids it contributed.
@@ -162,13 +153,11 @@ def check_ids_unique_across_cities(ids_by_city: dict[str, set[str]]) -> None:
 def check_join_integrity(child: pd.DataFrame, listing_ids: set[str], label: str) -> int:
     """Verify a child entity's ``listing_id`` resolves against the listings it belongs to.
 
-    This is the check that catches the failure nothing else can see. If the salt differed
-    between two entities, or an ID column read back as float somewhere, both frames still
-    look perfectly well-formed on their own — and every downstream join silently returns zero
-    rows. Comparing them is the only way to notice.
+    The check that catches the failure nothing else can see: if the salt differed between two
+    entities, or an ID column read back as float, both frames still look well-formed on their own
+    while every downstream join silently returns zero rows.
 
-    A handful of orphans is a real property of the data (Athens ships 5 calendar ids and 1
-    reviews id with no listings row), so those warn. A collapse below
+    A handful of orphans is a real property of the data, so those warn. A collapse below
     :data:`_MIN_JOIN_RESOLUTION` is a pipeline bug and raises.
 
     Args:
@@ -217,9 +206,9 @@ def write(frame: pd.DataFrame, entity: ProcessedEntity) -> None:
 def main() -> None:
     """Build the processed layer from the raw snapshots.
 
-    Listings are built first so their hashed ids are available to check the other two
-    against, then each remaining entity is built, verified, written, and released — the
-    calendar alone is 17M rows, and holding all three at once buys nothing.
+    Listings are built first so their hashed ids are available to check the other two against,
+    then each remaining entity is built, verified, written and released — the calendar alone is
+    17M rows.
     """
     load_dotenv()
     salt = _resolve_salt()

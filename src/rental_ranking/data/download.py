@@ -1,11 +1,10 @@
 """Download Inside Airbnb snapshot files per city into data/raw/<city>/<snapshot_date>/.
 
-Each snapshot folder gets a manifest.json recording url, size, and SHA-256 per file.
-The hashes are integrity fingerprints, not a security measure: they pin down exactly
-which bytes every analysis ran against (snapshots rotate off the public site, so the
-local copy becomes the reference), they expose corrupted or partial downloads, and the
-listings hash doubles as the dataset-version tag logged with every MLflow training run.
-Deliberately unsalted — anyone re-downloading the same file must get the same hash.
+Each snapshot folder gets a ``manifest.json`` recording url, size, and SHA-256 per file. The
+hashes are integrity fingerprints rather than a security measure: they pin down which bytes an
+analysis ran against once the public snapshot has rotated away, they expose partial downloads,
+and the listings hash is the dataset-version tag logged with every MLflow run. Unsalted on
+purpose — re-downloading the same file must give the same hash.
 """
 
 import hashlib

@@ -1,21 +1,16 @@
 """Build the figures ``docs/report.md`` embeds. The sole writer of ``docs/figures/``.
 
-The report makes claims with numbers in them, and a figure that disagrees with the prose is
-worse than no figure at all. So nothing here is drawn from a literal: the three charts are
-rendered from the same code paths that produced the numbers in the first place, and everything
-else is lifted straight out of the committed notebooks rather than redrawn.
+The report makes claims with numbers in them, and a figure that disagrees with the prose is worse
+than no figure at all. So nothing here is drawn from a literal:
 
-Two provenance rules, which are the whole reason this module exists:
-
-**Notebook plots are extracted, never re-run.** Each of the four notebooks carries its figures
-as base64 PNGs in its committed outputs. Copying those bytes out guarantees the report shows
-exactly the figure the notebook shows — no kernel, no seed, no matplotlib version in between.
+**Notebook plots are extracted, never re-run.** Each notebook carries its figures as base64 PNGs
+in its committed outputs. Copying those bytes out guarantees the report shows exactly the figure
+the notebook shows — no kernel, no seed, no matplotlib version in between.
 
 **The three new charts are computed, never typed in.** The sealed comparison comes from
-:func:`train.train.run`, the cold-start reach is recomputed from the out-of-fold scores that
-same call returns, and the narrowing ladder is read from the CSV
-``evaluate.exposure`` writes. A number in the report can therefore be wrong, but it cannot
-silently disagree with the chart beside it.
+:func:`train.train.run`, the cold-start reach is recomputed from the out-of-fold scores that same
+call returns, and the narrowing ladder is read from the CSV ``evaluate.exposure`` writes. A number
+in the report can therefore be wrong, but it cannot silently disagree with the chart beside it.
 
 Run:
     uv run python -m rental_ranking.figures
@@ -43,9 +38,9 @@ from rental_ranking.train import baseline as bl
 from rental_ranking.train import split
 from rental_ranking.train import train as trainer
 
-#: Which embedded notebook output goes to which report figure. A cell can emit several images —
-#: notebook 01's leak cell renders the plot plain, then captioned, then displays the figure
-#: object again — so the output index is part of the address, not an afterthought.
+#: Which embedded notebook output goes to which report figure. A single cell can emit several
+#: images — a plot rendered plain, then captioned, then echoed as a figure object — so the output
+#: index is part of the address rather than an afterthought.
 NOTEBOOK_FIGURES: dict[str, tuple[str, int, int]] = {
     "leak_price_quote_date.png": ("01_data_inventory.ipynb", 28, 2),
     "query_group_sizes.png": ("01_data_inventory.ipynb", 39, 0),
@@ -146,9 +141,9 @@ def extract_html_diagram(
 ) -> dict[str, Path]:
     """Lift the inline ``<svg>`` out of a hand-drawn HTML page and rasterize it.
 
-    Same provenance rule as the notebook figures, for the same reason: the drawing is authored
-    once, in the page, and both committed renderings are derived from it. A screenshot would be a
-    third copy that nothing keeps honest.
+    Same provenance rule as the notebook figures: the drawing is authored once, in the page, and
+    both committed renderings derive from it. A screenshot would be a third copy that nothing
+    keeps honest.
 
     The page background is read from its own CSS rather than passed in, because the SVG paints no
     background of its own — several labels are knocked out against the page colour, and a PNG
@@ -226,13 +221,11 @@ def cold_start_reach(
 ) -> dict[str, float]:
     """What share of deserving never-reviewed listings reaches a first screen.
 
-    The report's sharpest negative result, and the one the headline metric cannot see. "Deserving"
-    is the target's own judgement — grade 3 or above — so this asks whether the ranker surfaces
-    the new listings its own training signal says belong near the top.
+    "Deserving" is the target's own judgement — grade 3 or above — so this asks whether the ranker
+    surfaces the new listings its own training signal says belong near the top.
 
     The random figure is the analytic expectation ``min(k, n)/n`` averaged over the cohort's
-    groups rather than a simulation, because the expectation is exact and a simulation would only
-    add noise to a number the report quotes to one decimal.
+    groups rather than a simulation, which would only add noise to an exact quantity.
 
     Args:
         development: The development pool, carrying ``query_group``, ``grade`` and
@@ -361,7 +354,7 @@ def main() -> None:
         print(f"\nrendered {page} -> {', '.join(path.name for path in rendered.values())}")
 
     # One training run serves both model charts: the sealed table for the headline, and the
-    # out-of-fold scores for the cohort analysis. Notebook 04 pays exactly this cost.
+    # out-of-fold scores for the cohort analysis.
     print("\nrunning the training protocol for the two model charts ...")
     tables = trainer.run(log_to_mlflow=False)
 

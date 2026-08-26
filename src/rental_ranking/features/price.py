@@ -1,37 +1,29 @@
 """Price imputation over a structural fallback cascade.
 
-``price`` in Inside Airbnb v4.7 is not a standing nightly rate: it equals
-``price_quote_price_per_night``, the per-night figure from a quote for a *dated* stay, and the
-scraper chooses that date by walking forward to the listing's first opening. So price is
-missing exactly when there was nothing to quote — **its missingness tracks the label**, and
-both of the obvious shortcuts are closed:
+``price`` in Inside Airbnb v4.7 is not a standing nightly rate: it is the per-night figure from a
+quote for a *dated* stay, and the scraper picks that date by walking forward to the listing's
+first opening. Price is therefore missing exactly when there was nothing to quote — **its
+missingness tracks the label** — which closes both obvious shortcuts:
 
 * **Dropping the rows** deletes a non-random slice of the ranked population.
 * **A "has price" flag**, or passing NaN to LightGBM and letting its native missing handling
-  split on it, hands the model a label proxy. Measured on the filtered population, mean label
-  is 0.273 / 0.231 / 0.458 for price-null listings against 0.300 / 0.379 / 0.575 for the rest —
-  Athens' gap alone is as wide as its entire room-type gradient.
+  split on it, hands the model a label proxy: price-null listings carry a materially lower mean
+  label than the rest, by a margin as wide as a whole room-type gradient.
 
 So the price is imputed, and this module is the only place that happens. It cannot live in
-``data/clean.py``: the processed layer is lossless by contract and cannot see the filters,
-while the median that fills a row must be computed on the population that will be ranked.
-Ordering is therefore fixed — **filters, then imputation** — and is recorded in
-docs/data_pipeline_design.md.
+``data/clean.py``: the processed layer is lossless and cannot see the filters, while the median
+that fills a row must be computed on the population that will be ranked. The order is fixed —
+**filters, then imputation**.
 
-**The key is structural, never behavioural.** City, neighbourhood, room type, capacity: what
-the property *is*. Never cohort, listing age or ``rating_shrunk``: how it has *performed*.
-The full argument is in the decisions log; the short form is that conditioning the imputation
-on the label's dominant driver would let performance leak into a column the model reads as an
-attribute.
+**The key is structural, never behavioural.** City, neighbourhood, room type, capacity: what the
+property *is*, never how it has *performed*. Conditioning the imputation on the label's dominant
+driver would let performance leak into a column the model reads as an attribute.
 
 **There is no price tier here.** The grading partition is ``city x room_type`` — see
 ``label.assign_grades`` — because a price tier cross-cuts the query-group key instead of
-coarsening it, and grading inside a cross-cut partition inverts the label against the grade
-in 145 of 516 query groups. Rank-within-market survives only as a possible Phase 2 *feature*
-(a continuous within-city percentile), which is not this module's business.
+coarsening it, which inverts the label against the grade in 145 of 516 query groups.
 
-Convention, matching ``rental_ranking.data``: a pure ``DataFrame -> DataFrame`` transform with
-no I/O and no ``main()``.
+A pure ``DataFrame -> DataFrame`` transform: no I/O, no ``main()``.
 """
 
 import pandas as pd
@@ -43,9 +35,8 @@ from rental_ranking.features.groups import capacity_tier
 #: the first rung whose stratum has a median, so every rung reads "same city, same room type,
 #: and as much location and capacity as this listing still has a priced peer for".
 #:
-#: On the current snapshots only the first two fire (692 and 2 rows), but the cascade is a
-#: contract term rather than a convenience: a thinner neighbourhood would need the lower rungs,
-#: and ``city`` is the guaranteed terminator. Rung 2 is why Phase 1 owns the capacity tier.
+#: On the current snapshots only the first two rungs fire, but the rest are not decoration: a
+#: thinner neighbourhood would need them, and ``city`` is the guaranteed terminator.
 CASCADE: list[tuple[str, list[str]]] = [
     ("nbhd_room_accommodates", ["city", "neighbourhood_cleansed", "room_type", "accommodates"]),
     ("nbhd_room_tier", ["city", "neighbourhood_cleansed", "room_type", "capacity_tier"]),
@@ -69,10 +60,9 @@ def impute_price(
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Fill missing prices from progressively coarser structural strata.
 
-    The median, not the mean: ``price`` has a skew of 6.5 and a maximum of 9,243 against a
-    median of 120, and ``filters.is_extreme_price`` deliberately keeps everything below a 20x
-    data-error guard, so a stratum mean would be dragged by the very rows the filter chose not
-    to remove. It also makes the fill idempotent under any monotone rescaling of price.
+    The median, not the mean: price is heavily right-skewed and ``filters.is_extreme_price``
+    deliberately keeps everything below a 20x data-error guard, so a stratum mean would be dragged
+    by the very rows the filter chose not to remove.
 
     No leave-one-out is needed here, unlike when the cascade is benchmarked against held-out
     prices: a row being filled has a null price, so it contributes nothing to its own stratum

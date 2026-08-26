@@ -1,40 +1,35 @@
 """LambdaMART: the design matrix, the group array, the parameters, and the fit.
 
-Pure functions, no I/O and no ``main()`` — ``train/train.py`` is the orchestrator, exactly as
-``features/build.py`` is to ``features/``. Everything here can be called on a slice of the
-feature table without knowing where the slice came from, which is what lets the same code fit a
-cross-validation fold and the final refit.
+Pure functions, no I/O and no ``main()`` — ``train/train.py`` is the orchestrator. Everything here
+can be called on a slice of the feature table without knowing where the slice came from, which is
+what lets the same code fit a cross-validation fold and the final refit.
 
 **The feature list comes from ``assemble.feature_columns``, never from ``table.columns``.** The
-difference is one line and it is the difference between training on the features and training
-on the answer: ``grade`` is the target and ``blocked_fraction_90`` is the demand proxy the grade
-was cut from.
+difference is one line and it is the difference between training on the features and training on
+the answer: ``grade`` is the target and ``blocked_fraction_90`` is the demand proxy it was cut
+from.
 
 **Categoricals are passed natively.** Five columns — ``city``, ``room_type``, ``building_type``,
 ``license_status``, ``host_is_local`` — reach LightGBM as pandas ``category`` dtype, so it splits
 on subsets of levels rather than on an arbitrary integer order. No one-hot, no label encoding.
-Two of the five are conditioners (``city`` and ``room_type`` are constant inside a query group
-and can separate no pair), and they are passed anyway: a conditioner cannot discriminate but it
-can still tell the model which population it is ranking in.
+Two of the five are conditioners, constant inside a query group and unable to separate any pair;
+they are passed anyway, because a conditioner still tells the model which population it is
+ranking in.
 
 **NaN is passed through untouched.** LightGBM routes missing values down a learned default
-branch, which is strictly more informative than any fill — and ``price`` is the project's sole
-imputed column for a reason that does not generalise (its missingness tracks the label). The
-nullable extension dtypes are cast to ``float64`` first, because ``Int64``/``boolean`` carry
-``pd.NA`` rather than ``np.nan``; the cast preserves missingness and changes nothing else.
+branch, which is strictly more informative than any fill. Nullable extension dtypes are cast to
+``float64`` first, because ``Int64``/``boolean`` carry ``pd.NA`` rather than ``np.nan``; the cast
+preserves missingness and changes nothing else.
 
 **The gain vector is stated, not inherited.** Grades run 0-4 and LightGBM's default
-``label_gain`` is ``2**i - 1`` over a long index, so the default happens to be right — but a
-truncated vector silently flattens grade 4 into grade 3, which no metric reports.
-:func:`check_label_gain` asserts the observed maximum grade is addressable instead of trusting
-that.
+``label_gain`` happens to be right, but a truncated vector silently flattens grade 4 into grade 3,
+which no metric reports. :func:`check_label_gain` asserts the observed maximum grade is
+addressable rather than trusting that.
 
 **Its NDCG is not our NDCG, and the difference is exactly the degenerate groups.** LightGBM
-scores a group whose grades are all equal as 1.0; ``evaluate.metrics`` returns NaN and counts it.
-Measured on dev fold 1 (79 groups, 2 degenerate): LightGBM reports 0.7013, ``ndcg_at_k`` reports
-0.6935, and ``(0.6935 * 77 + 2) / 79 = 0.7013`` reconciles them exactly. Use LightGBM's number
-for early stopping — it is monotone in the same thing — and ``evaluate/`` for every number that
-gets reported.
+scores a group whose grades are all equal as 1.0; ``evaluate.metrics`` returns NaN and counts it,
+and the two reconcile exactly once those groups are added back. Use LightGBM's number for early
+stopping — it is monotone in the same thing — and ``evaluate/`` for every number that is reported.
 """
 
 from collections.abc import Sequence
@@ -68,9 +63,9 @@ LABEL_GAIN: list[int] = [2**grade - 1 for grade in range(MAX_GRADE + 1)]
 #: The project's headline cut-off, and what early stopping watches.
 EVAL_AT: list[int] = [10]
 
-#: Deliberately boring. The roadmap's starting point, recorded so a later sweep has something to
-#: have moved *from*. ``n_estimators`` is a ceiling, not a choice — early stopping picks the
-#: number, and the cross-validation median is what the final refit uses.
+#: Deliberately boring: a starting point recorded so a sweep has something to have moved *from*.
+#: ``n_estimators`` is a ceiling rather than a choice — early stopping picks the number, and the
+#: cross-validation median is what the final refit uses.
 DEFAULT_PARAMS: dict[str, object] = {
     "objective": "lambdarank",
     "metric": "ndcg",
@@ -84,10 +79,10 @@ DEFAULT_PARAMS: dict[str, object] = {
 
 #: Parameters that put randomness into a fit, with the values at which they contribute none.
 #: **With all of them at their defaults LightGBM is deterministic and ``random_state`` changes
-#: nothing** — measured 2026-08-18, three seeds produced bit-identical predictions. That matters
-#: because "five seeds, spread 0.000" reads as a stable model when it actually means there was no
-#: randomness to average over. The variance that exists is over *data*, and the group bootstrap
-#: in ``evaluate/report.py`` is what measures it.
+#: nothing** — different seeds produce bit-identical predictions. That matters because a
+#: zero-spread seed study reads as a stable model when it actually means there was no randomness
+#: to average over. The variance that exists is over *data*, and the group bootstrap in
+#: ``evaluate/report.py`` is what measures it.
 DETERMINISTIC_DEFAULTS: dict[str, object] = {
     "subsample_freq": 0,
     "colsample_bytree": 1.0,
@@ -114,8 +109,8 @@ def is_stochastic(params: dict[str, object]) -> bool:
     )
 
 
-#: Rounds without a validation improvement before the fit stops. Generous, because with 393
-#: queries the validation NDCG is noisy and a tight patience stops on noise.
+#: Rounds without a validation improvement before the fit stops. Generous, because validation
+#: NDCG over a few hundred queries is noisy and a tight patience stops on that noise.
 EARLY_STOPPING_ROUNDS = 100
 
 
@@ -170,12 +165,11 @@ def design_matrix(table: pd.DataFrame, features: Sequence[str] | None = None) ->
 def training_groups(table: pd.DataFrame, groups: pd.Series | None = None) -> np.ndarray:
     """LightGBM's positional group array for ``table``, re-checked at train time.
 
-    **BUILD_GUIDE gotcha #4, asserted a second time on purpose.** ``features/assemble.py`` checks
-    contiguity when the table is written, but a training run slices, filters and re-orders it
-    afterwards, and LightGBM reads the array positionally without ever seeing a group id. A
-    frame that lost its sort trains on queries stitched from two different searches and reports
-    a perfectly plausible number. ``group_sizes`` owns the rule and raises on both the sum and
-    the contiguity; this is the call site the roadmap asks for.
+    **Checked a second time on purpose.** ``features/assemble.py`` checks contiguity when the
+    table is written, but a training run slices, filters and re-orders it afterwards, and LightGBM
+    reads the array positionally without ever seeing a group id. A frame that lost its sort trains
+    on queries stitched from two different searches and reports a perfectly plausible number.
+    ``group_sizes`` owns the rule and raises on both the sum and the contiguity.
     """
     return group_sizes(table["query_group"] if groups is None else groups)
 
@@ -256,23 +250,19 @@ def predict(
 def serving_metadata(table: pd.DataFrame, features: Sequence[str] | None = None) -> dict:
     """The feature order and category levels a served model needs to reproduce training inputs.
 
-    **Measured 2026-08-18, after an initial guess that was wrong in two of three parts.** What a
-    served LightGBM model actually does with categoricals:
+    What a served LightGBM model actually does with categoricals, in three cases:
 
     * **Category *order* does not matter.** The booster stores the training levels in
       ``pandas_categorical`` and re-maps an incoming ``category`` column *by label* at predict
-      time. A request covering only ``{local, unknown}`` of ``{foreign, local, unknown}`` scores
-      identically to the full frame — verified to 0.000000. The "codes shift silently" story is
-      false; LightGBM already solved it.
+      time, so a request covering only some levels scores identically to the full frame.
     * **A plain string column fails loudly.** ``json.loads`` yields ``object`` dtype, and
-      predicting on that raises ``ValueError: train and valid dataset categorical_feature do not
-      match``. Loud is fine; it just has to be converted.
-    * **An unseen level is the one silent failure.** ``room_type="Houseboat"`` predicts without
-      complaint and lands **0.1083** away from the truth, because ``set_categories`` turns the
-      unknown label into NaN and the model scores it as *missing* rather than as *invalid*.
+      predicting on that raises ``train and valid dataset categorical_feature do not match``.
+    * **An unseen level is the one silent failure.** It predicts without complaint and lands well
+      away from the truth, because ``set_categories`` turns the unknown label into NaN and the
+      model scores it as *missing* rather than as *invalid*.
 
-    So this metadata exists for the third case and for column order (``Booster.predict`` on a
-    bare frame is positional). :func:`restore_dtypes` is where it is enforced.
+    So this metadata exists for the third case and for column order (``Booster.predict`` on a bare
+    frame is positional). :func:`restore_dtypes` is where it is enforced.
 
     Args:
         table: The training frame, whose dtypes define the contract.
@@ -295,27 +285,22 @@ def restore_dtypes(frame: pd.DataFrame, metadata: dict) -> pd.DataFrame:
     """Rebuild a request frame into the shape the model can score, and reject what it cannot.
 
     The inverse of :func:`serving_metadata`, and the function a scoring script calls. It does
-    exactly two things that matter, and both were established by measurement rather than assumed:
+    three things:
 
     1. **Casts the JSON-borne string columns back to ``category``.** Without this the request
-       fails loudly (``train and valid dataset categorical_feature do not match``), so this half
-       is about working at all, not about correctness.
-    2. **Rejects levels the model never saw.** This is the half that matters, because it is the
-       one path that is *silent*: ``set_categories`` maps an unknown label to NaN, the model
-       scores it as a missing value, and the caller receives a confident number **0.1083** away
-       from the truth with no indication anything was wrong.
+       fails loudly, so this half is about working at all rather than about correctness.
+    2. **Rejects levels the model never saw.** The half that matters, because it is the one path
+       that is *silent*: ``set_categories`` maps an unknown label to NaN, the model scores it as a
+       missing value, and the caller receives a confident wrong number.
+    3. **Coerces object-dtype numeric columns to float.** ``reindex`` gives an *absent* column
+       ``float64`` NaN, but a column that is **present and null for every listing** arrives from
+       ``json.loads`` as ``object``, which LightGBM rejects with an unhandled ``pandas dtypes must
+       be int, float or bool``. The two cases are the same request semantically; only the
+       serialiser differs.
 
-    Missing feature *columns* are a different matter and are allowed — they become NaN, which
-    LightGBM routes down a learned branch. A caller with no review scores for a brand-new
-    listing is describing the world accurately, not making a mistake.
-
-    3. **Coerces object-dtype numeric columns to float.** Added 2026-08-19 after the cold-start
-       demonstration request crashed the scoring container. ``reindex`` gives an *absent* column
-       ``float64`` NaN, but a column that is **present and null for every listing** comes out of
-       ``json.loads`` as ``object``, and LightGBM rejects the frame with ``pandas dtypes must be
-       int, float or bool`` — an unhandled exception, so a 500 rather than a message. The two
-       cases are the same request semantically; only the serialiser differs. A value that is
-       genuinely not a number now raises here instead, naming the column.
+    Missing feature *columns* are allowed — they become NaN, which LightGBM routes down a learned
+    branch. A caller with no review scores for a brand-new listing is describing the world
+    accurately, not making a mistake.
 
     Raises:
         ValueError: If a categorical column carries a level absent from training, or a numeric
@@ -354,9 +339,9 @@ def feature_importance(
 ) -> pd.DataFrame:
     """Gain and split importance, highest gain first.
 
-    **Read it against notebook 03 §2, not on its own.** A third of the numeric features are
-    conditioners — near-constant inside a query group — so they cannot separate a pair however
-    high they rank, and establishment features topping the chart re-derives what Phase 1 already
+    **Not to be read on its own.** A third of the numeric features are conditioners —
+    near-constant inside a query group — so they cannot separate a pair however high they rank,
+    and establishment features topping the chart re-derives what the label analysis already
     measured rather than discovering anything.
     """
     names = list(features) if features is not None else list(model.feature_name_)

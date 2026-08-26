@@ -1,26 +1,21 @@
 """The training run: cross-validate on the development pool, refit, score the sealed fold once.
 
 The orchestrator for ``train/`` — the only module here that reads a file, writes one, or has a
-``main()``, exactly as ``features/build.py`` is to ``features/``. Everything it composes is a
-pure function in ``lambdamart.py``, ``split.py``, ``evaluate/metrics.py`` and
-``evaluate/report.py``.
+``main()``. Everything it composes is a pure function in ``lambdamart.py``, ``split.py``,
+``evaluate/metrics.py`` and ``evaluate/report.py``.
 
-**The protocol, decided 2026-08-18 and irreversible.** ``assign_folds`` cuts the population into
-five folds over the ``cluster_id`` x ``query_group`` connected components. **Fold 0 is sealed.**
-Folds 1-4 are the development pool, and every decision — the stopping iteration here, the
-hyperparameters of any later sweep — is made by cross-validating inside it. The sealed fold is
-scored once, at the end, by a model refit on the whole pool.
-
-Why not one validation split: baseline A minus baseline B is a *constant*, and read off five
-candidate 20 % test halves it reports 0.0151 / 0.0116 / 0.0487 / 0.0249 / 0.0048. Per-group NDCG
-has standard deviation 0.187, so a single ~77-group validation set would choose the stopping
-iteration on noise of the same size as the effect being measured.
+**The protocol is irreversible.** ``assign_folds`` cuts the population into five folds over the
+``cluster_id`` x ``query_group`` connected components. **Fold 0 is sealed.** The rest are the
+development pool, and every decision — the stopping iteration here, the hyperparameters of any
+later sweep — is made by cross-validating inside it. The sealed fold is scored once, at the end,
+by a model refit on the whole pool. A single validation split would be too noisy to choose on;
+``split.py`` records the measurement that settled it.
 
 **Out-of-fold predictions are the second product, and they are free.** ``dev_cv_splits``
 partitions the pool exactly once, so concatenating each fold model's predictions on its own
 held-out fold gives one prediction per development row, each from a model that never trained on
-it. That is where the **per-city** numbers come from: the sealed fold holds 4 Thessaloniki
-groups (+/- 0.183, uninterpretable) against the pool's 24 (+/- 0.071).
+it. That is where the **per-city** numbers come from — the sealed fold holds too few groups in
+the smallest city to interpret on its own.
 
 **The two numbers describe different objects and the report must say which.** The out-of-fold
 table estimates the *procedure* — a model trained this way on three quarters of the pool. The
@@ -28,18 +23,17 @@ sealed table estimates the *artifact* — the model that would ship. Neither sub
 other, and "the model scores X in Thessaloniki" without naming which is an overstatement.
 
 **Cross-fold score scales never meet.** Each fold model calibrates its own scores, but a query
-group lies wholly inside one fold, and NDCG only ever compares scores *within* a group. So the
-concatenated out-of-fold scores are safe to rank even though they are not on a common scale —
-the usual trap in out-of-fold stacking does not arise here.
+group lies wholly inside one fold and NDCG only ever compares scores *within* a group, so the
+concatenated out-of-fold scores are safe to rank even though they share no scale. The usual trap
+in out-of-fold stacking does not arise here.
 
 **Seeds are reported as a mean and a spread, never as the best run** — but read the spread
-carefully. Measured 2026-08-18: at the starting parameters LightGBM is **fully deterministic**
-(``subsample_freq=0``, ``colsample_bytree=1.0``), so five seeds give bit-identical predictions
-and a spread of exactly 0.000. That is not a stable model; it is no randomness to average over,
+carefully. At the starting parameters LightGBM is **fully deterministic**
+(``subsample_freq=0``, ``colsample_bytree=1.0``), so every seed gives bit-identical predictions
+and a spread of exactly zero. That is not a stable model; it is no randomness to average over,
 and :func:`refit` says so rather than letting the zero read as stability. The variance that does
-exist is over *data* — the group bootstrap and the fold-to-fold spread in the cross-validation
-report are what measure it. A sweep that turns on ``subsample`` or ``colsample_bytree`` makes the
-seed spread meaningful, and it must be re-read then.
+exist is over *data*. A sweep that turns on ``subsample`` or ``colsample_bytree`` makes the seed
+spread meaningful, and it must be re-read then.
 """
 
 from __future__ import annotations
@@ -84,8 +78,8 @@ EXPERIMENT = "rental-ranking"
 #: The cut-off the curves and the stopping rule both read, kept in step with lambdamart.EVAL_AT.
 EVAL_K = lm.EVAL_AT[0]
 
-#: Seeds the final refit is repeated over. Five is the roadmap's number and it is a floor, not a
-#: target: one run that beats the baseline by 0.01 has told you nothing.
+#: Seeds the final refit is repeated over. A floor rather than a target: one run that beats the
+#: baseline by a hair has told you nothing.
 DEFAULT_SEEDS: tuple[int, ...] = (0, 1, 2, 3, 4)
 
 #: Prefix the per-seed sealed-fold rankers are named with, so :func:`summarise_seeds` can find
@@ -268,12 +262,17 @@ def summarise_seeds(table: pd.DataFrame, prefix: str = _SEED_PREFIX) -> pd.DataF
 def plot_learning_curves(curves: dict[int, list[float]], iterations: list[int], path: Path) -> Path:
     """Validation NDCG@10 against boosting iteration, one line per development fold.
 
-    **This figure is the argument, not decoration.** The stopping iteration is chosen as the
-    median of four ``best_iteration_`` values that ranged 158-718 — a 4.5x spread — while the
-    folds' scores stayed inside a 0.06 band. Written as a sentence that is an assertion; drawn as
-    four curves that go flat early and stay flat, it is evidence. It is also what makes the
-    later finding legible: a 35-configuration search on a surface this flat was never going to
-    find much, and it did not.
+    **This figure is the argument, not decoration.** The stopping iteration is the median of four
+    ``best_iteration_`` values that scatter over a several-fold range while the folds' held-out
+    scores barely move. Written as a sentence that is an assertion; drawn as four curves that
+    flatten early and stay flat, it is evidence — and it is what makes a flat hyperparameter
+    surface legible before the search confirms it.
+
+    The curves are LightGBM's **own** ``ndcg@10``, which scores a group whose listings all share
+    one grade as a perfect 1.0 and averages it in, where
+    :func:`~rental_ranking.evaluate.metrics.ndcg_at_k` excludes those groups instead, so a curve
+    reads slightly above the report's ``ndcg@10`` column. Per fold the two differ by an increasing
+    affine map, so the best iteration is identical either way.
     """
     import matplotlib
 
@@ -334,15 +333,13 @@ def _log_model(model: object, directory: Path) -> None:
     **What Azure ML does not support is narrower than it first appears.** MLflow 3 made
     ``log_model`` register a first-class *LoggedModel* entity through
     ``/api/2.0/mlflow/logged-models``; the workspace's MLflow server implements the 2.x API
-    surface and returns **404**, which failed a run whose training had already finished
-    (``strong_tiger_9myv0v3105``, 2026-08-18). **The model format is not the problem — only that
-    one registration call is.**
+    surface and returns 404, failing a run whose training had already finished. **The model format
+    is not the problem — only that one registration call is.**
 
     So the fallback is not a downgrade to a bare booster. ``mlflow.lightgbm.save_model`` writes a
     complete MLmodel directory *locally, contacting no server at all*, and logging that directory
     as run artifacts preserves the ``python_function`` flavour intact. Registering it afterwards
-    with ``az ml model create --type mlflow_model`` gives no-code deployment to a managed
-    endpoint — verified end to end on 2026-08-18. Nothing about serving is blocked.
+    with ``az ml model create --type mlflow_model`` gives no-code deployment to a managed endpoint.
     """
     try:
         mlflow.lightgbm.log_model(model.booster_, name="model")
@@ -536,8 +533,7 @@ def run(
         "seeds": seed_summary,
         "importance": importance,
         # The raw out-of-fold score per development row, returned so a caller can analyse the
-        # cohort structure of the predictions (notebook 04's cold-start section) without paying
-        # for a second four-fold cross-validation.
+        # cohort structure of the predictions without paying for a second cross-validation.
         "oof_scores": oof_scores.loc[development.index],
         "curves": pd.DataFrame({f"fold_{k}": pd.Series(v) for k, v in sorted(curves.items())}),
     }
@@ -552,10 +548,10 @@ def run_sweep(
 ) -> pd.DataFrame:
     """Run the random search and write the results table, losers included.
 
-    Separated from :func:`run` because it costs 35 cross-validations and its output is a
-    *decision*, not a model: which configuration the pre-declared acceptance rule admits. Written
-    to disk under the same contract as the feature table — gitignored, rebuilt by one command —
-    so notebook 04 displays it rather than recomputing it.
+    Separated from :func:`run` because it costs dozens of cross-validations and its output is a
+    *decision* rather than a model: which configuration the pre-declared acceptance rule admits.
+    Written to disk under the same contract as the feature table — gitignored, rebuilt by one
+    command — so a reader displays it rather than recomputing it.
     """
     from rental_ranking.train.sweep import accept, run_search
 
@@ -587,7 +583,7 @@ def _report(tables: dict[str, pd.DataFrame]) -> None:
     print("\nacross seeds:")
     print(tables["seeds"].round(4).to_string())
 
-    print("\ntop 15 features by gain (read against notebook 03 §2 — a third are conditioners):")
+    print("\ntop 15 features by gain (a third of them are conditioners, not discriminators):")
     print(tables["importance"].head(15).round(4).to_string())
 
     # Both baselines, both slices. The sealed fold is where the two frozen baselines swap

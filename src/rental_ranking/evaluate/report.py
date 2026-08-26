@@ -1,45 +1,31 @@
 """The comparison table: every ranker, every slice, identically sliced.
 
-``metrics.py`` answers "what did this ranker score". This module answers the question Phase 3
-actually asks — "did the model beat the frozen baselines, and by how much, on data it has not
-seen" — and it exists because that question has three ways of going quietly wrong.
+``metrics.py`` answers "what did this ranker score". This module answers "did the model beat the
+frozen baselines, and by how much, on data it has not seen" — a question with three ways of going
+quietly wrong.
 
-**1. The comparison must be same-groups.** The frozen population figures (A 0.6424, B 0.6218,
-random 0.5424) describe all 383 evaluable groups. A model scored on the sealed fold and compared
-against them is comparing two different populations: measured 2026-08-18, baseline A alone moves
-0.630-0.672 across the five folds, and on the production sealed fold **baseline B overtakes
-baseline A** (0.6429 against 0.6390) where on the population A leads by 0.0207. So the
-comparator is always recomputed on the groups being reported. :func:`comparison_table` takes
-every ranker at once and slices them with the same index, so identical slicing is a property of
-the code rather than a discipline.
+**1. The comparison must be same-groups.** A baseline scored on the whole population does not
+describe a sealed fold — the baselines move enough between folds to swap order — so the
+comparator is always recomputed on the groups being reported, and :func:`comparison_table` slices
+every ranker with the same index.
 
-**2. The floor is per slice, not a constant.** Averaged over 20 draws, a random ranking scores
-0.5424 over all groups but **0.4655** over groups larger than ``k`` and **0.7891** over groups
-of ``k`` or fewer. Quoting one floor beside a sliced number misstates the result in whichever
-direction the slice went, so :func:`random_floor` is recomputed per slice and ``range_share``
-reports the share of *that slice's* usable range the ranker traversed.
+**2. The floor is per slice, not a constant.** A random ranking scores far higher in small groups
+than in large ones, so quoting one floor beside a sliced number misstates the result.
+:func:`random_floor` is recomputed per slice.
 
-**3. A quarter of the unsliced metric is measured where nothing can be shown.** In groups of
-``k`` or fewer the cut-off excludes nothing, so NDCG@k scores the whole list and reads high for
-everyone: random 0.7891, baseline A 0.8069, baseline B 0.8070 — the two frozen baselines tied to
-four decimals. Those 91 groups carry **25.7 % of the metric's weight and 1.6 % of the listings**
-(693 rows), and every degenerate group is among them. Averaging them in shrinks the measurable
-improvement by a fifth: baseline A leads random by 0.1000 over all groups and by 0.1256 over the
-groups where the cut-off cuts.
+**3. Much of the unsliced metric is measured where nothing can be shown.** In groups of ``k`` or
+fewer the cut-off excludes nothing, so NDCG@k scores the whole list and reads high for every
+ranker alike — including a random one. Those groups are a small share of the listings and a large
+share of the metric's weight, so averaging them in shrinks the measurable improvement. The
+``n > k`` slice is therefore produced **automatically**: a report that omits it understates the
+result.
 
-So the ``n > k`` slice is produced **automatically**, not on request — a report that omits it can
-be read as 20 % worse than it is. The cut-off is ``k`` itself and moves with it; it is the
-condition under which the top-``k`` cut-off excludes anything, not a chosen threshold. The band
-breakdown remains the fuller answer, and it shows the effect is an artifact rather than a
-gradient: the floor is 0.789 below 10 and then flat at 0.411 / 0.416 / 0.417 above 30.
+Pairing matters for the same reason. Both rankers see the same groups, so their errors are
+correlated and an unpaired interval on a *difference* is materially too wide.
+:func:`comparison_table` reports the paired difference against a chosen reference beside the
+levels.
 
-Pairing matters for the same reason. Per-group NDCG has standard deviation 0.187, so at the
-sealed fold's ~72 groups an unpaired 95 % interval on a *difference* is +/- 0.060; resampling
-the groups jointly and differencing inside the resample gives +/- 0.037, because the two rankers
-see the same groups. :func:`comparison_table` reports the paired difference against a chosen
-reference alongside the levels.
-
-Convention: pure transforms, no I/O, no ``main()``.
+Pure transforms — no I/O, no ``main()``.
 """
 
 from collections.abc import Mapping
@@ -49,9 +35,8 @@ import pandas as pd
 
 from rental_ranking.evaluate.metrics import DEFAULT_K, bootstrap_ci, ndcg_at_k
 
-#: Random draws averaged into the floor. One permutation varies by sd 0.006 across seeds, which
-#: is large next to the differences being reported, so a single draw is false precision on the
-#: number every headline is read against.
+#: Random draws averaged into the floor. A single permutation varies across seeds by enough to
+#: matter next to the differences being reported.
 FLOOR_DRAWS = 20
 
 #: Name the floor is reported under, and the name :func:`comparison_table` gives the random
@@ -90,9 +75,8 @@ def paired_difference(
     """Mean difference of two per-group metrics with a paired bootstrap CI.
 
     **Groups are resampled once and both rankers read the same resample.** The two are evaluated
-    on identical groups, so their errors are correlated and the unpaired interval on a difference
-    is wider than the truth — measured 2026-08-18 at +/- 0.060 unpaired against +/- 0.037 paired
-    for baselines A and B at 79 groups.
+    on identical groups, so their errors are correlated and an unpaired interval on the difference
+    is wider than the truth.
 
     Args:
         treatment: Per-group metric for the ranker under test.
@@ -128,7 +112,7 @@ def metric_slices(
     """The slices every ranker is reported on, as group-id indexes.
 
     Always produced: ``overall``, ``n>k`` and ``n<=k``. The last two are not optional — see the
-    module docstring for why a report that omits them reads about 20 % pessimistic.
+    module docstring.
 
     Args:
         groups: Query-group id per row.
@@ -229,9 +213,9 @@ def comparison_table(
 def headline(table: pd.DataFrame, ranker: str, reference: str, slice_name: str = "overall") -> str:
     """The result sentence, written from the table rather than around a number.
 
-    The roadmap fixes the framing before the number exists: a bare "0.68 vs 0.64" is true and
-    misleading, because the floor is not zero. This renders level, comparator, that slice's own
-    floor, and the share of the usable range — so the sentence cannot be tuned to flatter.
+    The framing is fixed before the number exists: a bare "0.68 vs 0.64" is true and misleading,
+    because the floor is not zero. This renders level, comparator, that slice's own floor, and the
+    share of the usable range — so the sentence cannot be tuned to flatter.
 
     Args:
         table: Output of :func:`comparison_table`, built with ``reference``.
@@ -250,10 +234,9 @@ def headline(table: pd.DataFrame, ranker: str, reference: str, slice_name: str =
         f"against {reference} at {base[metric]:.4f} and a random floor of {row['floor']:.4f} "
         f"on {int(row['groups'])} groups ({slice_name})"
     )
-    # The paired difference exists only against the reference the table was built with. Asking
-    # for another baseline is a reasonable thing to do — the sealed fold is where the two frozen
-    # baselines swap order, so both deserve a sentence — and it degrades to the levels rather
-    # than raising, because the per-group vectors a paired interval needs are not in the table.
+    # The paired difference exists only against the reference the table was built with. Asking for
+    # another baseline is reasonable, so this degrades to the levels rather than raising: the
+    # per-group vectors a paired interval needs are not in the table.
     if f"vs_{reference}" in table.columns:
         sentence += (
             f"; the difference is {row[f'vs_{reference}']:+.4f} "

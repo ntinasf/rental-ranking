@@ -1,31 +1,19 @@
 """The grouped train/test split: connected components, and a fold assignment over them.
 
-**The split is the one irreversible decision in Phase 3.** Every number computed afterwards is
+**The split is the one irreversible decision in training.** Every number computed afterwards is
 conditional on it, so the reasoning is recorded here rather than in a notebook.
 
-**The conflict, and why option A won.** Two constraints want the same rows. Near-twin listings
-(same host, same point, same capacity — ``features.groups.cluster_id``) must not straddle the
-split, or the model memorises the pair instead of learning the feature. Query groups must not
-be broken, or NDCG on the test half is computed over a partial candidate set and is no longer
-the measurement the frozen baselines made. But 76 clusters span more than one query group, so
-neither constraint can hold alone.
+**The conflict.** Near-twin listings (same host, point and capacity —
+``features.groups.cluster_id``) must not straddle the split, or the model memorises the pair
+instead of learning the feature. Query groups must not be broken, or NDCG on the test half is
+computed over a partial candidate set and is no longer the measurement the frozen baselines made.
+Some clusters span more than one query group, so neither constraint can hold alone.
 
-:func:`split_component` dissolves the conflict by splitting on the connected components of the
-``cluster_id`` x ``query_group`` bipartite graph, which are the coarsest units both constraints
-respect exactly. Measured on the shipped feature table (2026-08-18): **345 components** over
-393 groups and 41,148 clusters — 305 hold one group, 32 hold two, 8 hold three. None crosses a
-city. The largest holds 2,240 rows, 5.0 % of the population.
-
-That last number reads close to the roadmap's ~5 % abort threshold, and it should not. **The
-lumpiness is imposed by the group-size skew, not by the components.** The largest single query
-group is already 2,088 rows, and the top-five unit sizes barely move under the coarsening::
-
-    groups:      2088  2042  1411  1160  1114
-    components:  2240  2135  1411  1305  1247
-
-So option A costs about 7 % on the largest unit and 48 units of granularity, and buys both
-constraints exactly, with no listing dropped and no group broken. Options B (accept 88 broken
-groups) and C (accept 253 leaked listings) pay a real price to avoid a cost that is not there.
+:func:`split_component` dissolves it by splitting on the connected components of the
+``cluster_id`` x ``query_group`` bipartite graph — the coarsest units that respect both exactly,
+with no listing dropped and no group broken. The coarsening costs almost nothing in granularity,
+because the lumpiness is imposed by the group-size skew rather than by the components: the
+largest component is barely larger than the largest query group already is.
 
 **The protocol the folds encode.** :func:`assign_folds` cuts the components into ``k`` equal
 folds. Fold :data:`SEALED_FOLD` is the test half, touched once at the end; the rest are the
@@ -33,34 +21,20 @@ development pool, and every selection decision — amenity scheme, hyperparamete
 iteration — is made by cross-validating inside it via :func:`dev_cv_splits`, never against the
 sealed fold.
 
-The reason for a 4-fold development pool rather than one validation split is measured, and it
-is the reason this module exists in this shape. Baseline A minus baseline B is a **constant**:
-neither is fitted, neither reads the label, and on the ranked population the difference is
-0.0207. Read off five candidate 20 % test halves, that constant reports::
+Four development folds rather than one validation split, because a single 20 % split is too noisy
+to choose on. The difference between the two frozen baselines is a *constant* — neither is fitted
+and neither reads the label — yet read off five candidate test halves it swings by a factor of
+ten. At that size the interval on a level is as wide as the model-versus-baseline effect this
+exists to detect, so a single split would pick hyperparameters out of noise.
 
-    fold 0  A 0.6511   B 0.6360   A-B 0.0151
-    fold 1  A 0.6406   B 0.6290   A-B 0.0116
-    fold 2  A 0.6461   B 0.5975   A-B 0.0487
-    fold 3  A 0.6573   B 0.6323   A-B 0.0249
-    fold 4  A 0.6176   B 0.6129   A-B 0.0048
+**Stratification is on city and group-size band, and the band matters more**: per-group NDCG
+varies far more across size bands than any model will, so a test half drawn heavy in small groups
+scores higher for every ranker in the table. Band is a pre-label structural property, so
+balancing on it is not conditioning on the target. **Grade is deliberately not in the objective**
+— :func:`fold_balance` reports it and nothing optimises it, because balancing a split on the
+target is how a split starts choosing its own answer.
 
-A tenfold swing on a quantity that does not vary. Per-group NDCG@10 has a standard deviation of
-0.187, so at ~77 groups the 95 % half-width is +/- 0.041 on a level and +/- 0.037 paired — the
-same size as the model-versus-baseline effect this phase exists to detect. A single validation
-split of the same size would choose hyperparameters on that noise. Four folds put ~307 groups
-behind every decision instead, and the sealed fold stays sealed.
-
-**Stratification is on city and group-size band, and the band matters more.** Per-group NDCG@10
-for baseline A by band: 0.824 / 0.642 / 0.545 / 0.576 / 0.646 — a 0.28 spread that swamps
-anything a model will do, so a test half drawn heavy in small groups scores higher for every
-ranker in the table. Band is a pre-label structural property, so balancing on it is not
-conditioning on the target. **Grade is deliberately not in the objective**: it is reported by
-:func:`fold_balance` and never optimised, because balancing the split on the target is how a
-split starts choosing its own answer. :func:`assign_folds` never sees ``grade``.
-
-Convention, matching ``rental_ranking.data`` and ``features``: pure transforms, no I/O and no
-``main()``. :func:`assign_folds` returns ``(ids, report)`` like ``query_group`` — the assignment,
-and the per-fold counts that document it.
+Pure transforms, no I/O and no ``main()``.
 """
 
 from collections.abc import Sequence
@@ -83,9 +57,8 @@ DEFAULT_FOLDS = 5
 #: silent version of tuning on test.
 SEALED_FOLD = 0
 
-#: Group-size band edges, as ``pd.cut`` edges. Chosen to track where NDCG@10 actually moves:
-#: below 10 the cut-off does not cut (the whole group is inside the top 10, so the metric scores
-#: full-list ordering and reads high), and the middle bands are where ranking is hardest.
+#: Group-size band edges, as ``pd.cut`` edges, tracking where NDCG@10 actually moves: below 10
+#: the cut-off does not cut, so the metric scores full-list ordering and reads high for everyone.
 GROUP_SIZE_BANDS: list[float] = [0, 10, 30, 100, 400, np.inf]
 
 GROUP_SIZE_BAND_LABELS: list[str] = ["<10", "10-30", "30-100", "100-400", "400+"]
@@ -273,7 +246,7 @@ def assign_folds(
     ids = component.map(assignment).astype("int64").rename("fold")
 
     # The whole point of the component unit. Checked rather than assumed: a bug here is silent,
-    # and every number in the phase would be computed on a leaked split.
+    # and every number downstream would be computed on a leaked split.
     for column, unit in (("cluster_id", "cluster"), ("query_group", "query group")):
         spanning = listings.groupby(column, observed=True).apply(
             lambda block, ids=ids: ids.loc[block.index].nunique(), include_groups=False
@@ -356,10 +329,8 @@ def dev_cv_splits(fold: pd.Series, sealed: int = SEALED_FOLD) -> list[tuple[pd.I
     """Cross-validation folds over the development pool, with the sealed fold excluded.
 
     The list every selection decision is made against: amenity scheme, hyperparameters, and the
-    stopping iteration. Each entry trains on the rest of the pool and validates on one fold, so
-    a decision rests on the mean and spread of ``len(folds) - 1`` estimates over ~307 query
-    groups rather than on one 77-group draw — see the module docstring for the measurement that
-    made this necessary.
+    stopping iteration. Each entry trains on the rest of the pool and validates on one fold, so a
+    decision rests on the mean and spread of several estimates rather than on one small draw.
 
     **The sealed fold appears in neither side of any pair.** That is the invariant worth a test:
     a sealed fold leaking into a training index is invisible in every metric it produces.

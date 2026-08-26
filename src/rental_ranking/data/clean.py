@@ -1,17 +1,15 @@
 """Typing, parsing and derivation for the raw Inside Airbnb entities.
 
-Runs after :mod:`rental_ranking.data.anonymize` and before concatenation. Like anonymization,
-every function is a pure ``DataFrame -> DataFrame`` transform with no I/O, and the step is
-**lossless apart from integrity**: the only rows it removes are exact duplicate listing IDs.
-Every other suspicious value is reported through a warning and kept, because row exclusion is
-an analytical decision that lives in ``filters.py`` and stays revisable without re-processing.
+Runs after :mod:`rental_ranking.data.anonymize` and before concatenation. Pure
+``DataFrame -> DataFrame`` transforms, no I/O, and **lossless apart from integrity**: the only
+rows removed are exact duplicate listing IDs. Every other suspicious value is warned about and
+kept, because row exclusion is an analytical decision that lives in ``filters.py``.
 
-The column dispositions applied here come from :mod:`rental_ranking.data.columns`, never from
-a fresh literal — the spec is tested against the real headers, a literal is not.
+Column dispositions come from :mod:`rental_ranking.data.columns`, never from a fresh literal —
+the spec is tested against the real headers, a literal is not.
 
 **No label anchor is computed here.** T is each listing's own ``min(calendar.date)``, which a
-listings frame cannot see, and pinning a per-city T would contradict the logged decision.
-``scrape_date`` is carried per row so the Phase 1 label step can anchor properly.
+listings frame cannot see; ``scrape_date`` is carried per row so the label step can anchor.
 """
 
 import json
@@ -28,10 +26,10 @@ _BOOLEAN_TOKENS = {"t": True, "f": False}
 #: ``has_availability`` is constant, so both are dropped rather than parsed.
 _LISTINGS_BOOLEAN_COLUMNS = ("host_is_superhost", "host_has_profile_pic", "host_identity_verified")
 
-#: The listings date columns, all ISO-formatted. ``last_scraped`` becomes ``scrape_date``.
-#: The two ``price_quote_*`` dates are typed like any other date even though they are
-#: label-adjacent and banned as features: notebook 02 subtracts T from the check-in date to
-#: measure the leak, and leaving them as strings pushes that parse into every consumer.
+#: The listings date columns, all ISO-formatted. ``last_scraped`` becomes ``scrape_date``. The
+#: two ``price_quote_*`` dates are typed like any other date even though they are label-adjacent
+#: and banned as features — validation reads them, and leaving them as strings pushes that parse
+#: into every consumer.
 _LISTINGS_DATE_COLUMNS = (
     "last_scraped",
     "first_review",
@@ -42,8 +40,8 @@ _LISTINGS_DATE_COLUMNS = (
 
 _DATE_FORMAT = "%Y-%m-%d"
 
-#: Calendar length per listing. Verified 365 for every Thessaloniki listing, but 8 listings
-#: across Athens and Crete carry 366-367 rows, so this is a warning threshold, not an assert.
+#: Calendar length per listing. A handful of listings carry 366-367 rows, so this is a warning
+#: threshold rather than a hard check.
 _EXPECTED_CALENDAR_DAYS = 365
 
 
@@ -58,8 +56,7 @@ class BoundingBox(NamedTuple):
 
 #: Generous administrative bounds per market — a sanity check, not a precision fence. Sized to
 #: catch gross errors (swapped latitude/longitude, a city merged into the wrong frame) while
-#: leaving legitimate outlying listings alone: tightening them to the observed extent would
-#: flag ~25 real listings per snapshot and train you to ignore the warning.
+#: leaving legitimate outlying listings alone.
 BOUNDING_BOXES: dict[str, BoundingBox] = {
     "thessaloniki": BoundingBox(south=40.40, north=40.80, west=22.70, east=23.20),
     "athens": BoundingBox(south=37.60, north=38.35, west=23.00, east=24.20),
@@ -71,8 +68,8 @@ def parse_price(values: pd.Series) -> pd.Series:
     """Convert Inside Airbnb's ``"$1,712.00"`` price strings to floats.
 
     Note what this column *is*: a dated quote for the listing's first available stay, not a
-    standing nightly rate. Its missingness therefore tracks availability, which tracks the
-    label — see the contract. Impute it downstream; never expose a "has price" flag.
+    standing nightly rate. Its missingness therefore tracks availability, which tracks the label.
+    Impute it downstream; never expose a "has price" flag.
 
     Args:
         values: Raw ``price`` values.
@@ -108,8 +105,7 @@ def tenure_months(years: pd.Series, months: pd.Series) -> pd.Series:
     """Combine Inside Airbnb's split tenure fields into a single month count.
 
     The range check is the point: if a future snapshot puts a *total* in the ``_months`` field
-    instead of a 0-11 remainder, ``years * 12 + months`` silently inflates every tenure and
-    nothing downstream looks wrong.
+    rather than a 0-11 remainder, ``years * 12 + months`` silently inflates every tenure.
 
     Args:
         years: Whole years of tenure.
@@ -153,10 +149,8 @@ def to_boolean(values: pd.Series) -> pd.Series:
 def parse_amenities(values: pd.Series) -> pd.Series:
     """Parse the amenities JSON array into a Python list per row.
 
-    Missing entries become an empty list rather than ``NaN`` so downstream code can call
-    ``len`` unconditionally. ``json.loads`` cannot be vectorised, but the ``apply`` stays an
-    implementation detail — the signature is still column-in, column-out, so a future
-    vectorised form would not touch a single call site.
+    Missing entries become an empty list rather than ``NaN`` so downstream code can call ``len``
+    unconditionally.
 
     Args:
         values: Raw ``amenities`` JSON strings.
@@ -184,12 +178,12 @@ def parse_amenities(values: pd.Series) -> pd.Series:
 def infer_bathrooms(numeric: pd.Series, text: pd.Series) -> tuple[pd.Series, pd.Series]:
     """Recover a bathroom count and a shared-bathroom flag from the two source columns.
 
-    ``bathrooms_text`` leads and ``bathrooms`` is the fallback, not the other way round: the
-    text column is the near-complete one (7 nulls in Athens against 711 in ``bathrooms``).
+    ``bathrooms_text`` leads and ``bathrooms`` is the fallback, not the other way round: the text
+    column is the near-complete one.
 
-    "Half-bath", "Shared half-bath" and "Private half-bath" carry no digit and mean 0.5 — 23
-    rows in Athens alone. A plain ``float(text.split()[0])`` raises on them, and swallowing
-    that in an ``except`` would turn a known quantity into a missing one.
+    "Half-bath", "Shared half-bath" and "Private half-bath" carry no digit and mean 0.5. A plain
+    ``float(text.split()[0])`` raises on them, and swallowing that in an ``except`` would turn a
+    known quantity into a missing one.
 
     Args:
         numeric: Raw ``bathrooms`` values.
@@ -215,8 +209,7 @@ def infer_bathrooms(numeric: pd.Series, text: pd.Series) -> tuple[pd.Series, pd.
 def within_bounding_box(latitude: pd.Series, longitude: pd.Series, box: BoundingBox) -> pd.Series:
     """Mask the coordinates falling inside ``box``.
 
-    Returns a mask instead of printing, so the caller can warn once with a count. A per-row
-    print in a library is a denial of service on your own terminal at 27k rows.
+    Returns a mask rather than printing, so the caller can warn once with a count.
 
     Args:
         latitude: Latitude in decimal degrees.
@@ -261,7 +254,7 @@ def clean_listings(df: pd.DataFrame, city: str) -> pd.DataFrame:
     out = df.copy()
 
     # Deduplication is the one row-removing act allowed here: a repeated `id` is a scrape
-    # artefact, not an analytical outlier. Everything else is warned about and kept.
+    # artefact, not an analytical outlier.
     duplicates = out["id"].duplicated()
     if warn_violations(duplicates, "listings: duplicate id, keeping first"):
         out = out[~duplicates]
@@ -284,8 +277,8 @@ def clean_listings(df: pd.DataFrame, city: str) -> pd.DataFrame:
     )
 
     out["city"] = city
-    # Per row, not per city: `last_scraped` spans up to four days inside one market (Crete runs
-    # 06-29 to 07-03), so the folder's release date is not this listing's scrape date.
+    # Per row, not per city: `last_scraped` spans several days inside one market, so the folder's
+    # release date is not this listing's scrape date.
     out["scrape_date"] = out["last_scraped"]
 
     # A review cannot postdate the scrape that observed it. The upper bound is a Series, so
@@ -311,8 +304,8 @@ def clean_calendar(df: pd.DataFrame) -> pd.DataFrame:
     """Type an anonymized calendar frame and project it to the kept columns.
 
     The per-date ``minimum_nights``/``maximum_nights`` are dropped here rather than during
-    anonymization: they fall inside the label window, which is an analytical reason, not a
-    privacy one.
+    anonymization: they fall inside the label window, which is an analytical reason, not a privacy
+    one.
 
     Args:
         df: An anonymized calendar frame.
@@ -329,9 +322,8 @@ def clean_calendar(df: pd.DataFrame) -> pd.DataFrame:
     out["date"] = parse_dates(out["date"])
     out["available"] = to_boolean(out["available"])
 
-    # Each listing should carry one contiguous year forward from its own scrape date. Verified
-    # true for every Thessaloniki listing, but 8 listings across Athens and Crete run 366-367
-    # days, so this reports rather than asserts — and the label window is 90 days, so a few
+    # Each listing should carry one contiguous year forward from its own scrape date. A handful
+    # run 366-367 days, so this reports rather than raises; the label window is 90 days, so a few
     # extra tail days change nothing.
     span = out.groupby("listing_id")["date"].agg(["size", "min", "max"])
     irregular = (span["size"] != _EXPECTED_CALENDAR_DAYS) | (

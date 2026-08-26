@@ -667,14 +667,12 @@ def plot_binned_relationship(
 ) -> tuple[plt.Figure, dict]:
     """Median of ``y`` against binned ``x``, one line per group, with an IQR band.
 
-    For the case a scatter cannot serve: tens of thousands of points, a heavily skewed
-    ``x``, and a monotone relationship a point cloud would bury. Binning ``x`` and plotting
-    the per-bin median makes the shape legible; the interquartile band keeps the spread
-    visible, so the line is not mistaken for a fit.
+    For the case a scatter cannot serve: tens of thousands of points, a heavily skewed ``x``, and
+    a monotone relationship a point cloud would bury. The per-bin median makes the shape legible
+    and the interquartile band keeps the spread visible, so the line is not mistaken for a fit.
 
-    A second panel carries the per-bin counts. Unequal bin occupancy is the standard way a
-    binned plot misleads — a dramatic-looking tail bin may hold twelve rows — and a shared
-    x-axis shows that without resorting to a second y-scale on the same panel.
+    A second panel carries the per-bin counts, because unequal bin occupancy is the standard way a
+    binned plot misleads — a dramatic-looking tail bin may hold twelve rows.
 
     Args:
         x_data: Numeric series to bin along the x-axis.
@@ -683,9 +681,8 @@ def plot_binned_relationship(
         bins: Bin edges. Defaults to deciles of ``x``, which suit a skewed distribution far
             better than equal-width bins.
         figsize: Figure size.
-        title: Headline. Default is the column names, which is only ever adequate for a
-            throwaway look — a figure that leaves the notebook should state its *finding*
-            here, since the surrounding prose does not travel with the image.
+        title: Headline. Defaults to the column names; a figure that leaves the notebook should
+            state its *finding* here, since the surrounding prose does not travel with the image.
         subtitle: One line under the title, for what was measured over what population.
         xlabel: Overrides the x column name. Define the term rather than naming it.
         ylabel: Overrides the y column name. Say which direction is which.
@@ -816,10 +813,10 @@ def plot_discrete_distribution(
 ) -> tuple[plt.Figure, dict]:
     """Share of each *exact* value of a discrete variable, one line per group.
 
-    For a variable that only looks continuous. A histogram or KDE bins across the values
-    and smears point masses into their neighbours — which is fatal when the point masses
-    are the thing under inspection. Plotting every attainable value is exact: there is no
-    bin width to defend, and an atom appears as the vertical jump it is.
+    For a variable that only looks continuous. A histogram or KDE bins across the values and
+    smears point masses into their neighbours, which is fatal when the point masses are the thing
+    under inspection. Plotting every attainable value is exact: no bin width to defend, and an
+    atom appears as the vertical jump it is.
 
     Counting happens on the integer values, so equality is never a floating-point question;
     ``x_divisor`` only rescales the axis for display (pass 90 to read a count of 0-90 days
@@ -1044,11 +1041,10 @@ def plot_scores_against_floor(
 ) -> tuple[plt.Figure, dict]:
     """Ranked scores as horizontal bars, read against the floor rather than against zero.
 
-    A ranking metric has no meaningful zero. NDCG@10 normalises within a candidate set, so a
-    shuffle of a ten-listing group scores 1.0 and a shuffle of a large one still scores well
-    above nothing — quoting 0.75 without saying what chance gets is the single easiest way to
-    misread one. The shaded band from zero to ``floor`` is unreachable in practice, so the eye
-    reads each bar against the range that was actually available.
+    A ranking metric has no meaningful zero: NDCG normalises within a candidate set, so even a
+    shuffle scores well above nothing, and quoting a level without saying what chance gets is the
+    easiest way to misread one. The shaded band from zero to ``floor`` is unreachable in practice,
+    so the eye reads each bar against the range that was actually available.
 
     ``ceiling`` exists for the same reason in the other direction: where a quantity is capped
     below 1.0 — the share of a cohort that *can* reach a first screen, say — the attainable
@@ -1169,11 +1165,9 @@ def plot_dose_response(
 ) -> tuple[plt.Figure, dict]:
     """One or two quantities against an ordered dose, each on its own axis.
 
-    For a policy knob where the thing gained and the thing paid for move in opposite
-    directions, and the question is where they cross. Two series get two y axes because they
-    are in different units — a mean grade and a share of a first screen do not belong on one
-    scale, and forcing them onto one invents a crossing point that is an artifact of the
-    scaling.
+    For a policy knob where the thing gained and the thing paid for move in opposite directions
+    and the question is where they cross. Two series get two y axes because they are in different
+    units, and forcing them onto one invents a crossing point that is an artifact of the scaling.
 
     ``reference`` draws the do-nothing arm as a dashed rule per series, so every point is read
     as a departure from it rather than in isolation.

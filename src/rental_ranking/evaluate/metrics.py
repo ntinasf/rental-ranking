@@ -1,28 +1,18 @@
 """NDCG@k, Recall@k, and bootstrap confidence intervals over query groups.
 
-A point estimate without variance is not a result: bootstrap over groups, report CIs, and break
-results out per city and by group size.
-
 **Everything is computed per query group and then averaged over groups**, never pooled over
-listings. Pooling would weight a 2,088-listing group a thousand times more heavily than a
-6-listing one, and the group is the unit a search engine is judged on.
+listings: pooling would weight a 2,088-listing group a thousand times more heavily than a
+6-listing one, and the group is the unit a search engine is judged on. The bootstrap resamples
+groups for the same reason.
 
 **Gain is exponential** (``2**grade - 1``), matching LightGBM's ``lambdarank`` default, so a
-number from here is comparable with what the training job reports rather than merely similar to
-it. Linear gain is available for reporting but is not the default.
+number from here is comparable with what the training job reports rather than merely similar.
 
-**Degenerate groups are counted, never quietly scored.** Two kinds arise:
+**Degenerate groups return NaN and are reported as a count**, never quietly scored: with every
+grade equal any permutation scores 1.0, and with every grade zero NDCG is 0/0.
+``include_degenerate=True`` restores LightGBM's internal convention.
 
-* Every grade equal — any permutation scores NDCG 1.0, so including them inflates the mean
-  without any ranker having done anything. Measured on the current key, 10 of 393 groups.
-* Every grade zero — the ideal DCG is 0 and NDCG is 0/0, undefined.
-
-Both are returned as NaN and reported as a count, so the headline says how many groups it is
-actually about. ``include_degenerate=True`` restores the convention LightGBM uses internally.
-
-**Ties are broken by row order, not favourably.** A tie-break that consults the grade inflates
-every metric; ranking is a stable sort on the score alone, and because rows arrive in hashed-id
-order the residual order is unrelated to the label.
+**Ties break on row order, never on the grade**, which would inflate every metric.
 """
 
 from collections.abc import Sequence
@@ -200,10 +190,10 @@ def evaluate_ranking(
 
 
 def size_band(groups: pd.Series, edges: Sequence[int] = (0, 10, 50, 200, 10_000)) -> pd.Series:
-    """Label each row with its query group's size band — the breakdown the roadmap asks for.
+    """Label each row with its query group's size band.
 
-    Group sizes span 2 to 2,088 here, and NDCG@10 over 2,088 documents is a different
-    measurement from NDCG@10 over 6. Reporting one average across both hides that.
+    Group sizes span 2 to 2,088 here, and NDCG@10 over 2,088 documents is a different measurement
+    from NDCG@10 over 6. One average across both hides that.
     """
     sizes = groups.map(groups.value_counts())
     return pd.cut(

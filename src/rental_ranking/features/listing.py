@@ -1,34 +1,29 @@
 """The listing feature block: structural attributes, host attributes, and the amenity encoding.
 
-Phase 2 step 2 — "boring and reliable first". Everything here is an attribute of the property
-or its operator as recorded at the scrape, so the pre-T rule is satisfied by construction rather
-than by argument: none of it reads the calendar, and none of it reads a review.
+Everything here is an attribute of the property or its operator as recorded at the scrape, so the
+pre-T rule is satisfied by construction rather than by argument: none of it reads the calendar,
+and none of it reads a review.
 
-**Nothing is imputed.** `bedrooms` is 7.5 % null and stays null, decided 2026-08-17 on the test
-that matters: within a query group, the mean label percentile of a null-bedrooms listing is
-0.498 against 0.505 for the rest — there is nothing for the model to exploit. The marginal gap
-that *is* visible per city (0.022 / 0.067 / 0.050) is composition, not signal: nulls concentrate
-in private rooms (31.5 % against 5.6 % for entire homes), and ``room_type`` is part of the
-query-group key, so the confound is differenced out by the group itself. That is the structural
-difference from ``price``, whose missingness sat on a mechanical path from the label and had to
-be imputed. LightGBM learns a split direction for NaN, which is a fitted decision; any fill is
-an assumed one. See docs/decisions_log.md.
+**Nothing is imputed.** ``bedrooms`` is 7.5 % null and stays null: within a query group the mean
+label percentile of a null-bedrooms listing is indistinguishable from the rest, so there is
+nothing for the model to exploit. The per-city gap that *is* visible is composition rather than
+signal — nulls concentrate in private rooms, and ``room_type`` is part of the query-group key, so
+the group differences the confound out. That is the structural difference from ``price``, whose
+missingness sat on a mechanical path from the label. LightGBM learns a split direction for NaN,
+which is a fitted decision; any fill is an assumed one.
 
 **Two things in the key are conditioners, not discriminators.** ``room_type`` and the city are
-part of the query-group key, so they are constant inside almost every group and can separate no
-pair. They are kept anyway, because a tree uses them to *condition* — to let price or capacity
-act differently inside entire homes than inside private rooms. Expect them near the top of a
-split count and near the bottom of any honest "what ranks a listing" reading; step 7 exists to
-keep that distinction visible.
+constant inside almost every group and can separate no pair. They are kept because a tree uses
+them to *condition* — to let price or capacity act differently inside entire homes than inside
+private rooms. Expect them near the top of a split count and near the bottom of any honest "what
+ranks a listing" reading.
 
 **``property_type`` is decomposed rather than passed raw.** Its 81 values largely restate
-``room_type`` plus a building type ("Entire rental unit", "Private room in rental unit"), so
-the occupancy prefix is stripped and only :func:`building_type` — 58 values, and genuinely
-varying inside a query group — is carried. That removes the redundancy with a key column and
-leaves the part a ranker can use.
+``room_type`` plus a building type ("Entire rental unit", "Private room in rental unit"), so the
+occupancy prefix is stripped and only :func:`building_type` is carried — 58 values that genuinely
+vary inside a query group.
 
-Convention, matching ``rental_ranking.data``: pure ``DataFrame -> DataFrame`` transforms, no I/O
-and no ``main()``. Assembly of the full matrix belongs to step 8.
+Pure ``DataFrame -> DataFrame`` transforms, no I/O and no ``main()``.
 """
 
 import re
@@ -40,7 +35,7 @@ from rental_ranking.data.columns import LABEL_ADJACENT_COLUMNS
 from rental_ranking.data.validate import require_columns
 from rental_ranking.features.amenities import amenity_features
 
-#: Structural attributes passed through unchanged. `price` is already imputed by Phase 1 and is
+#: Structural attributes passed through unchanged. `price` arrives already imputed and is
 #: the only one here that ever was; the rest keep their nulls (`bedrooms` 7.5 %, `beds` 3.7 %,
 #: `bathrooms_shared` 0.1 %) and reach LightGBM as NaN.
 STRUCTURAL_COLUMNS: tuple[str, ...] = (
@@ -56,7 +51,7 @@ STRUCTURAL_COLUMNS: tuple[str, ...] = (
 
 #: Host and licence attributes. ``host_id`` is **not** among them: 18,088 near-unique values on
 #: 44,684 rows is a direct route to memorising individual operators rather than learning what
-#: makes a listing rank. ``license_hash`` is excluded for the same reason (33,246 values).
+#: makes a listing rank. ``license_hash`` is excluded for the same reason.
 HOST_COLUMNS: tuple[str, ...] = (
     "host_is_superhost",
     "host_is_local",
@@ -92,12 +87,9 @@ def building_type(listings: pd.DataFrame) -> pd.Series:
     """Strip the occupancy prefix from ``property_type``, leaving what kind of building it is.
 
     ``property_type`` conflates two things: whether the guest gets the whole place — which
-    ``room_type`` already says, and which the query-group key already conditions on — and what
-    the place *is*. Only the second is new information, and unlike ``room_type`` it varies
-    inside a query group, so a ranker can use it.
-
-    Measured on the ranked population: 81 property types collapse to 58 building types, led by
-    rental unit (21,376), condo (6,251), home (6,245) and villa (5,711).
+    ``room_type`` already says, and which the query-group key already conditions on — and what the
+    place *is*. Only the second is new information, and unlike ``room_type`` it varies inside a
+    query group, so a ranker can use it. 81 property types collapse to 58 building types.
 
     Args:
         listings: Frame carrying ``property_type``.
@@ -122,7 +114,7 @@ def listing_features(
 
     Args:
         listings: The **filtered** ranked population with ``price`` already imputed — the frame
-            Phase 1 hands on. See ``_REQUIRED_COLUMNS``, ``STRUCTURAL_COLUMNS`` and
+            ``features/build.py`` hands on. See ``_REQUIRED_COLUMNS``, ``STRUCTURAL_COLUMNS`` and
             ``HOST_COLUMNS`` for what is read.
         amenity_scheme: Passed to
             :func:`rental_ranking.features.amenities.amenity_features`.
@@ -151,9 +143,9 @@ def listing_features(
     for column in CATEGORICAL_COLUMNS:
         features[column] = features[column].astype("category")
 
-    # The blocklist is checked here as well as in step 8, because this is the module that reads
-    # the raw frame: a column added to STRUCTURAL_COLUMNS by hand is exactly how a forward
-    # availability window would enter the matrix wearing a structural name.
+    # Checked here as well as at assembly, because this is the module that reads the raw frame: a
+    # column added to STRUCTURAL_COLUMNS by hand is exactly how a forward availability window
+    # would enter the matrix wearing a structural name.
     blocked = sorted(set(features.columns) & LABEL_ADJACENT_COLUMNS)
     if blocked:
         raise ValueError(

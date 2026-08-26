@@ -1,21 +1,18 @@
 """Strip and hash host and reviewer PII before anything leaves the local environment.
 
-The threat model is the *publication* boundary — the repo, notebook outputs, the README.
-Local disk and the private Blob container are storage, not publication, so raw snapshots
-keep their PII untouched; these transforms gate what reaches ``data/processed/`` and
-everything downstream of it. The policy is fixed by docs/data_pipeline_design.md
-§Anonymization and encoded as the column sets in :mod:`rental_ranking.data.columns` —
-change the doc, that module, and this one together.
+The threat model is the *publication* boundary — the repo, notebook outputs, the README. Local
+disk and the private Blob container are storage rather than publication, so raw snapshots keep
+their PII; these transforms gate what reaches ``data/processed/`` and everything downstream. The
+policy is the column sets in :mod:`rental_ranking.data.columns` and docs/data_pipeline_design.md
+§Anonymization — change the doc, that module, and this one together.
 
-Every function here is a pure ``DataFrame -> DataFrame`` transform with no I/O; loading and
-writing belong to the orchestrator. Anonymization is **lossless in rows**: it removes columns
-and replaces identifying values, but never drops a listing. Row exclusion lives in
-``filters.py`` and nowhere else.
+Pure ``DataFrame -> DataFrame`` transforms, no I/O. Anonymization is **lossless in rows**: it
+removes columns and replaces identifying values, but never drops a listing.
 
-One deliberate exception to "strip the text": reviews ``comments`` is kept raw, because the
-Phase 4 sentiment features need it. The free text does contain reviewer first names, which is
-acceptable under the threat model above — only aggregate sentiment scores are ever published —
-on one standing condition: **a published notebook cell must never render raw comment rows.**
+One deliberate exception to "strip the text": reviews ``comments`` is kept raw, since the
+sentiment work reads it. That text does contain reviewer first names, which is acceptable only
+because nothing but aggregates is ever published — **a published notebook cell must never render
+raw comment rows.**
 """
 
 import hashlib
@@ -29,7 +26,7 @@ from rental_ranking.data.validate import require_columns
 
 #: Truncation length of the hex digest. 12 hex chars = 48 bits; at ~47k listings the
 #: birthday-collision probability is ~1e-4, and a collision merges two listings rather than
-#: leaking one, so the risk is tolerable. Do not shorten it further.
+#: leaking one. Do not shorten it further.
 HASH_LENGTH = 12
 
 _SALT_ENV_VAR = "ANON_SALT"
@@ -38,10 +35,9 @@ _SALT_ENV_VAR = "ANON_SALT"
 def _resolve_salt(salt: str | None = None) -> str:
     """Return the salt to hash with, falling back to the ``ANON_SALT`` environment variable.
 
-    Raises rather than defaulting to an empty salt. An unsalted digest of a public,
-    enumerable listing ID is reversible by dictionary attack, and the failure is invisible:
-    the output still looks like a correctly anonymized dataset. Failing loudly here is the
-    only point at which that mistake is catchable.
+    Raises rather than defaulting to an empty salt: an unsalted digest of a public, enumerable
+    listing ID is reversible by dictionary attack, and the output still looks correctly
+    anonymized, so this is the only point at which the mistake is catchable.
 
     Args:
         salt: Explicit salt. When ``None``, ``$ANON_SALT`` is read instead.
@@ -64,14 +60,13 @@ def _resolve_salt(salt: str | None = None) -> str:
 def _canonical_key(value: object) -> str:
     """Render a value as the exact string that gets hashed, independent of pandas dtypes.
 
-    A single null anywhere in an integer ID column makes pandas widen the whole column to
-    ``float64``, and ``str(12345.0)`` is ``"12345.0"`` — a different digest for the same
-    listing. The calendar/listings join then returns zero rows with no error anywhere.
-    Collapsing integral floats back to integers keeps the digest stable across that widening.
+    A single null in an integer ID column makes pandas widen the whole column to ``float64``, and
+    ``str(12345.0)`` is a different digest for the same listing — after which the
+    calendar/listings join returns zero rows with no error anywhere. Collapsing integral floats
+    back to integers keeps the digest stable across that widening.
 
-    This is a second line of defence, not the first. Listing IDs here exceed 2**53
-    (max observed 1.7e18), so a column genuinely parsed as float has *already* lost
-    precision before this function sees it. Pin ID dtypes at load time.
+    A second line of defence only: listing IDs here exceed 2**53, so a column genuinely parsed as
+    float has already lost precision. Pin ID dtypes at load time.
     """
     if isinstance(value, bool):
         return str(value)
@@ -100,15 +95,13 @@ def hash_value(value: object, salt: str | None = None) -> str:
 def hash_series(values: pd.Series, salt: str | None = None) -> pd.Series:
     """Salted-hash a column, hashing each *distinct* value once and preserving nulls.
 
-    Hashing per row would recompute the same digest millions of times: the calendar is 17.0M
-    rows across the three cities but holds only 46,640 distinct ``listing_id`` values. Building
-    the digest map from the uniques and calling :meth:`pandas.Series.map` gives the identical
-    result far more cheaply — measured on Athens' 5.2M calendar rows, 0.06s here against 2.8s
-    for the equivalent ``Series.apply``.
+    Hashing per row would recompute the same digest millions of times: the calendar is 17.0M rows
+    but holds only 46,640 distinct ``listing_id`` values, so the digest map is built from the
+    uniques and applied with :meth:`pandas.Series.map`.
 
-    Nulls stay null. That matters most for ``license``: hashing a missing licence would give
-    every unlicensed listing the *same* digest, which reads downstream as one operator holding
-    hundreds of properties and corrupts the duplicate-licence commercial-operator signal.
+    Nulls stay null. That matters most for ``license``: hashing a missing licence would give every
+    unlicensed listing the *same* digest, which reads downstream as one operator holding hundreds
+    of properties and corrupts the commercial-operator signal.
 
     Args:
         values: The column to hash.
@@ -125,8 +118,8 @@ def hash_series(values: pd.Series, salt: str | None = None) -> pd.Series:
 def host_is_local(host_location: pd.Series) -> pd.Series:
     """Derive the three-way home-market flag from ``host_location``.
 
-    Three-way, not boolean: the source column is 34-37% null, so "unknown" is a real category
-    and collapsing it into "foreign" would invent an observation that was never made.
+    Three-way, not boolean: the source column is 34-37% null, so "unknown" is a real category and
+    collapsing it into "foreign" would invent an observation that was never made.
 
     Args:
         host_location: Raw ``host_location`` values.
@@ -158,8 +151,8 @@ def host_has_about(host_about: pd.Series) -> pd.Series:
 def license_status(license_values: pd.Series) -> pd.Series:
     """Derive the three-way registration status from the raw ``license`` column.
 
-    Greece's AMA registry makes this near-complete (only 2.8-4.3% null), so the three
-    categories are all well populated and "missing" is informative rather than noise.
+    Greece's AMA registry makes this near-complete (2.8-4.3% null), so all three categories are
+    well populated and "missing" is informative rather than noise.
 
     Args:
         license_values: Raw ``license`` values.
@@ -185,9 +178,8 @@ def anonymize_listings(df: pd.DataFrame, salt: str | None = None) -> pd.DataFram
     ``host_location`` / ``host_about`` / ``license`` with the derived columns recorded in
     :data:`~rental_ranking.data.columns.DERIVED_FROM`.
 
-    The licence is both categorized *and* hashed: the hash is what makes duplicate licences
-    linkable across listings (369 / 2,204 / 10,925 rows across the three cities), which is a
-    strong commercial-operator signal, while the raw number is a registry identifier.
+    The licence is both categorized *and* hashed: the raw number is a registry identifier, while
+    the hash keeps duplicate licences linkable across listings — a commercial-operator signal.
 
     Args:
         df: A raw listings frame with the v4.7 schema.
@@ -221,10 +213,9 @@ def anonymize_listings(df: pd.DataFrame, salt: str | None = None) -> pd.DataFram
 def anonymize_calendar(df: pd.DataFrame, salt: str | None = None) -> pd.DataFrame:
     """Hash ``listing_id`` in a calendar frame. No columns are dropped here.
 
-    The per-date ``minimum_nights`` / ``maximum_nights`` columns also leave the pipeline, but
-    that is a *cleaning* decision (they fall inside the label window) encoded in
-    :data:`~rental_ranking.data.columns.CALENDAR_KEEP`, not an anonymization one. Keeping the
-    two concerns in separate steps means a change to either is reviewable on its own.
+    The per-date ``minimum_nights`` / ``maximum_nights`` columns also leave the pipeline, but as a
+    *cleaning* decision — they fall inside the label window — encoded in
+    :data:`~rental_ranking.data.columns.CALENDAR_KEEP`, not an anonymization one.
 
     Args:
         df: A raw calendar frame.
@@ -246,9 +237,9 @@ def anonymize_calendar(df: pd.DataFrame, salt: str | None = None) -> pd.DataFram
 def anonymize_reviews(df: pd.DataFrame, salt: str | None = None) -> pd.DataFrame:
     """Drop reviewer identity from a reviews frame and hash ``listing_id``.
 
-    Only ``listing_id`` is hashed. The reviews ``id`` is the *review's* own identifier, not a
-    person's, and it is the natural dedup key for the review table, so it stays raw per the
-    contract. ``comments`` also stays raw — see the module docstring for the condition attached.
+    Only ``listing_id`` is hashed. The reviews ``id`` identifies the *review*, not a person, and
+    is the natural dedup key for the table, so it stays raw. ``comments`` also stays raw — see the
+    module docstring for the condition attached.
 
     Args:
         df: A raw reviews frame.

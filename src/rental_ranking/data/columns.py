@@ -1,20 +1,17 @@
 """Column spec for the Inside Airbnb v4.7 schema — constants only, no logic.
 
-This is the executable form of the column dispositions in docs/data_dictionary.md §4,
-which the pipeline contract (docs/data_pipeline_design.md) derives from. Every one of the
-90 listings columns appears in exactly one disposition set; ``test_columns.py`` enforces
-that, so a schema change in a future snapshot fails loudly instead of silently passing an
-unknown column through.
+The executable form of the column dispositions in docs/data_dictionary.md §4. Every one of the
+90 listings columns appears in exactly one disposition set, enforced by ``test_columns.py``, so
+a schema change in a future snapshot fails loudly instead of passing an unknown column through.
 
-The set that matters most is ``LABEL_ADJACENT_COLUMNS``: those columns are kept in the
-processed data for validation, and must never reach a model. Two of them are not obvious —
-``price_quote_checkin_date``/``_checkout_date`` are the listing's first *available* calendar
-date, i.e. a direct read of the label (see docs/data_dictionary.md §3).
+``LABEL_ADJACENT_COLUMNS`` is the set that matters most: kept in the processed data for
+validation, never a model input. Two of them are not obvious — ``price_quote_checkin_date`` and
+``_checkout_date`` are the listing's first *available* calendar date, a direct read of the label.
 """
 
 # --- listings -------------------------------------------------------------------------
 
-#: Verified 100% null in Thessaloniki, Athens and Crete (2026-07-25 snapshots).
+#: Verified 100% null in all three city snapshots.
 ALL_NULL_COLUMNS: frozenset[str] = frozenset(
     {
         "calendar_updated",
@@ -64,7 +61,7 @@ DERIVED_FROM: dict[str, str] = {
 REDUNDANT_DROP_COLUMNS: frozenset[str] = frozenset(
     {
         "calendar_last_scraped",  # duplicate of last_scraped
-        "description",  # deferred to Phase 4 text features
+        "description",  # free text; no text features in the model
         "has_availability",  # constant 't'; only its nullity varies, and that tracks the label
         "maximum_maximum_nights",
         "maximum_minimum_nights",
@@ -141,7 +138,7 @@ KEEP_COLUMNS: frozenset[str] = frozenset(
     }
 )
 
-#: The full v4.7 listings header, in file order. Concatenation asserts against this.
+#: The full v4.7 listings header, in file order. Concatenation checks against this.
 LISTINGS_COLUMNS: tuple[str, ...] = (
     "id",
     "listing_url",

@@ -1,17 +1,15 @@
 """Forward-90-day occupancy demand proxy, bucketed into graded relevance 0-4.
 
-The label is a **demand proxy**, never "bookings": the Inside Airbnb calendar is
-forward-looking availability, and blocked days include personal use, maintenance and
-seasonality. Features may only use data available before the label window starts.
+The label is a **demand proxy**, never "bookings": the Inside Airbnb calendar is forward-looking
+availability, and blocked days include personal use, maintenance and seasonality. Features may
+only use data available before the label window starts.
 
-The window points **forward** from T = ``min(calendar.date)`` for that listing — per
-listing, never per city, because scrape dates spread over up to four days inside one
-market (decisions log 2026-07-24 and 2026-07-25). ``availability_90`` is the label in
-column form: the standing cross-check, never a feature.
+The window points **forward** from T = ``min(calendar.date)``, per listing and never per city,
+because scrape dates spread over several days inside one market. ``availability_90`` is the same
+quantity in column form: the standing cross-check, never a feature.
 
-Convention, matching ``rental_ranking.data``: pure ``DataFrame -> DataFrame`` transforms,
-no I/O, no ``main()``. Reading the parquets belongs to the caller — the notebook, or a
-Phase 2 orchestrator.
+Pure ``DataFrame -> DataFrame`` transforms, no I/O, no ``main()``; reading the parquets belongs
+to the caller.
 """
 
 import warnings
@@ -22,14 +20,13 @@ import pandas as pd
 
 from rental_ranking.data.validate import require_columns, warn_violations
 
-#: The label window in days. Fixed by contract (docs/data_pipeline_design.md), not a knob —
-#: the default is the label. The parameter exists so notebook 02 can run a window-length
-#: sensitivity check without a second implementation to keep in step.
+#: The label window in days. Not a knob — the default *is* the label. The parameter exists so a
+#: window-length sensitivity check needs no second implementation.
 LABEL_WINDOW_DAYS = 90
 
 #: Share of listings whose derived availability must match the shipped ``availability_90``.
-#: Measured 99.96-99.99 %; the residual is scrape timing, not a defect. Enforced against the
-#: real snapshots by ``tests/test_label.py``, not at runtime — see ``crosscheck_availability_90``.
+#: Observed at 99.96-99.99 %, the residual being scrape timing rather than a defect. Enforced
+#: against the real snapshots by ``tests/test_label.py``, not at runtime.
 MIN_AVAILABILITY_AGREEMENT = 0.999
 
 #: Quantile bins above the zero atom. Grades run 0-4: grade 0 is the atom itself, grades 1-4
@@ -38,15 +35,13 @@ MIN_AVAILABILITY_AGREEMENT = 0.999
 GRADES_ABOVE_ATOM = 4
 
 #: Rows above the atom a partition cell needs before it cuts its own quantiles. Three is the
-#: arithmetic floor for quartiles; 30 is where the cut points stop moving with a handful of
-#: rows. Two cells fall below it on the current snapshots (Athens and Crete Shared room, 31
-#: rows between them), and grade within ``DEFAULT_FALLBACK_COLS`` instead.
+#: arithmetic floor for quartiles; 30 is where the cut points stop moving with a handful of rows.
+#: Cells below it grade within ``DEFAULT_FALLBACK_COLS`` instead.
 MIN_PARTITION_ROWS = 30
 
-#: The grading partition. **A coarsening of the query-group key, never a cross-cut of it** —
-#: see :func:`assign_grades`. Room type earns its place on gradient (mean-label spread across
-#: its levels is 0.027 / 0.222 / 0.146 by city); a price tier does not and would break the
-#: coarsening rule besides.
+#: The grading partition. **A coarsening of the query-group key, never a cross-cut of it** — see
+#: :func:`assign_grades`. Room type earns its place on the label gradient across its levels; a
+#: price tier does not, and would break the coarsening rule besides.
 DEFAULT_PARTITION_COLS = ("city", "room_type")
 
 #: Terminator for cells below ``MIN_PARTITION_ROWS``. Applied regardless of its own size.
@@ -70,11 +65,10 @@ def occupancy_label(calendar: pd.DataFrame, window_days: int = LABEL_WINDOW_DAYS
         Listings absent from ``calendar`` are absent here; the caller's merge is where that
         surfaces.
 
-        ``blocked_fraction_calendar`` exists for the dormancy filter and is **never a
-        feature**: it spans the label window and then some. A listing blocked for its whole
-        forward year has been withdrawn, not booked — and unlike a rule defined only outside
-        the window, this one cannot mistake a summer-only operator for a dead listing,
-        because a seasonal listing is open during the summer by definition.
+        ``blocked_fraction_calendar`` exists for the dormancy filter and is **never a feature**:
+        it spans the label window and then some. A listing blocked for its whole forward year has
+        been withdrawn rather than booked, and a whole-year rule cannot mistake a summer-only
+        operator for a dead listing.
 
     Raises:
         KeyError: If a required column is missing.
@@ -117,15 +111,15 @@ def occupancy_label(calendar: pd.DataFrame, window_days: int = LABEL_WINDOW_DAYS
     )
     labels[blocked] = (1 - labels[available] / window_days).astype("float64")
 
-    # Over the whole calendar, not the window. Its denominator is per-listing (365, or 366-367
-    # for eight of them), which is why it is computed as a mean rather than a fixed division.
+    # Over the whole calendar, not the window. Its denominator is per-listing (365, or a little
+    # more for a handful), which is why it is a mean rather than a fixed division.
     labels["blocked_fraction_calendar"] = (
         1 - calendar.groupby("listing_id")["available"].mean()
     ).astype("float64")
 
-    # Reported, not raised: a gap outside the window cannot affect the label, and a gap
-    # inside it already failed the size check above. Eight listings run 366-367 contiguous
-    # days, so length alone is not the signal — span disagreeing with count is.
+    # Reported, not raised: a gap outside the window cannot affect the label, and a gap inside it
+    # already failed the size check above. A few listings run 366-367 contiguous days, so length
+    # alone is not the signal — span disagreeing with count is.
     warn_violations(
         labels["calendar_days"].ne(labels["calendar_span"]),
         "calendar is not contiguous (row count disagrees with first-to-last span)",
@@ -137,15 +131,12 @@ def crosscheck_availability_90(labels: pd.DataFrame, listings: pd.DataFrame) -> 
     """Per-city agreement between the derived availability and the shipped ``availability_90``.
 
     The one sanctioned use of a ``LABEL_ADJACENT_COLUMNS`` member: Inside Airbnb computes
-    ``availability_90`` at the moment of the scrape, independently of anything this package
-    does, so it is the standing evidence that the window is anchored and counted correctly.
-    A break here means the anchor drifted or the calendar changed shape — not that a listing
-    behaved oddly.
+    ``availability_90`` at the moment of the scrape, independently of this package, so it is
+    standing evidence that the window is anchored and counted correctly. A break here means the
+    anchor drifted or the calendar changed shape.
 
-    Returns a frame rather than raising, matching the data layer's report-don't-delete rule.
-    ``MIN_AVAILABILITY_AGREEMENT`` is the threshold; the assertion lives in the test suite,
-    where it runs against the real snapshots, so a notebook can display the number without
-    a runtime cost on every call.
+    Returns a frame rather than raising. ``MIN_AVAILABILITY_AGREEMENT`` is the threshold, and the
+    assertion lives in the test suite, where it runs against the real snapshots.
 
     Args:
         labels: Output of :func:`occupancy_label` at the default 90-day window.
@@ -171,10 +162,9 @@ def crosscheck_availability_90(labels: pd.DataFrame, listings: pd.DataFrame) -> 
 def _quartiles(values: pd.Series, reference: pd.Series, cell: object) -> pd.Series:
     """Grade ``values`` 1-4 against the quartiles of ``reference``.
 
-    Split from a plain ``qcut`` because the two are not always the same population: a cell that
-    cuts its own quantiles passes ``values`` twice, while an undersized cell passes its own rows
-    and the *fallback* pool as the reference. Edges therefore come from ``retbins`` and are
-    applied with :func:`pandas.cut`, which is what ``qcut`` does internally anyway.
+    Split from a plain ``qcut`` because the two are not always the same population: a cell cutting
+    its own quantiles passes ``values`` twice, while an undersized cell passes its own rows and
+    the *fallback* pool as the reference.
     """
     try:
         _, edges = pd.qcut(reference, GRADES_ABOVE_ATOM, labels=False, retbins=True)
@@ -200,41 +190,29 @@ def assign_grades(
 ) -> tuple[pd.Series, pd.DataFrame]:
     """Bucket the demand proxy into relevance grades 0-4 within a partition.
 
-    **Scheme E, decided 2026-08-16.** ``label == 0.0`` is reserved as grade 0; everything above
-    it is quartiled into grades 1-4 within partition. The zero atom is a qualitatively different
-    state — nothing in 90 peak-season days was blocked — and reserving it is what keeps
-    cold-start listings out of the bottom grade: 8.0 % of never-reviewed listings land in grade
-    0 here against 38.6 % under plain quintiles.
-
-    The 1.0 atom is deliberately **not** reserved, reversing the earlier scheme B. Measured, the
-    entire cold-start benefit comes from the zero atom (scheme B and this one both give 8.0 %),
-    while reserving 1.0 as well cost a top class of 2.6 % that appears in only 41 % of query
-    groups, and made one blocked night out of ninety decide a grade boundary on a label where
-    blocked is not booked. Since the dormancy filter, every listing at 1.0 carries reviews
-    (132 / 372 / 664, median 18.5 / 12 / 8), so it sits at the top of the fourth quartile on its
-    merits rather than needing a reserved seat.
+    ``label == 0.0`` is reserved as grade 0; everything above it is quartiled into grades 1-4
+    within partition. The zero atom is a qualitatively different state — nothing in 90 peak-season
+    days was blocked — and reserving it is what keeps cold-start listings out of the bottom grade,
+    where plain quintiles would strand several times as many of them.
+    The 1.0 atom is deliberately **not** reserved; every listing at 1.0 carries reviews, so it
+    reaches the top quartile on its merits.
 
     **Cuts are on the label's value, not on its rank.** ``pd.qcut`` yields left-open,
     right-closed intervals, so every listing sharing a label value gets the same grade and the
     grade is non-decreasing in the label inside each cell. Cutting on ``rank(method="first")``
-    would instead split identical listings by row order. The cost is that the quartiles are not
-    exactly equal — the label lives on a 91-value grid, so a boundary value takes its whole tie
+    would split identical listings by row order instead. The cost is that the quartiles are not
+    exactly equal: the label lives on a 91-value grid, so a boundary value takes its whole tie
     group into the lower bin.
 
-    **The partition must be a coarsening of the query-group key** — that is why this takes
+    **The partition must be a coarsening of the query-group key** — which is why this takes
     column *names*: `city x room_type` is nested inside
     `city x neighbourhood x room_type x capacity_tier`, so grade order can never oppose label
-    order inside a group. A cross-cutting partition (a price tier) breaks that in 145 of 516
-    groups. ``tests/test_label.py`` pins the invariant; see docs/data_pipeline_design.md.
-
-    Taking names rather than a price frame is also what keeps this module from importing
-    ``features/price.py``. Nothing derived from price reaches the grade any more, but the
-    decoupling stands: grading is testable with a fixture of plain strings.
+    order inside a group. A cross-cutting partition such as a price tier breaks that in 145 of
+    516 groups. ``tests/test_label.py`` pins the invariant.
 
     Not special-cased, deliberately: listings with **zero reviews and a zero label** land in
-    grade 0 like any other zero. Undiscovered and undesirable are indistinguishable in this
-    data, and a neutral grade would fabricate a target. They are carried and named as a
-    limitation instead (decisions log 2026-08-04).
+    grade 0 like any other zero. Undiscovered and undesirable are indistinguishable in this data,
+    and a neutral grade would fabricate a target.
 
     Args:
         listings: The **filtered** ranked population, with price already imputed, carrying

@@ -81,7 +81,7 @@ def test_a_phase_one_diagnostic_column_is_caught() -> None:
 
 
 def test_every_diagnostic_column_is_caught() -> None:
-    for column in assemble.PHASE1_DIAGNOSTIC_COLUMNS:
+    for column in assemble.DIAGNOSTIC_COLUMNS:
         with pytest.raises(ValueError, match="diagnostic"):
             assemble.check_feature_table(_table(**{column: 1}))
 
@@ -196,5 +196,5 @@ def test_the_sub_scores_add_a_handful_of_nulls_beyond_that_cohort(
 
 
 def test_nothing_that_reads_the_label_window_is_present(real_table: pd.DataFrame) -> None:
-    forbidden = LABEL_ADJACENT_COLUMNS | assemble.PHASE1_DIAGNOSTIC_COLUMNS
+    forbidden = LABEL_ADJACENT_COLUMNS | assemble.DIAGNOSTIC_COLUMNS
     assert set(real_table.columns) & forbidden == set()

@@ -1,36 +1,30 @@
 """Spatial features: distance to a market's anchors, to its own neighbourhood, and local density.
 
 **Crete is not a city.** Its bounding box is 84 x 248 km against Athens' 9 x 7, so a single
-"distance to the centre" is meaningless there — it would place a Chania apartment 150 km from
-downtown and rank it as remote. Each market therefore gets an **anchor set**, and the feature is
-the distance to the *nearest* one. Verified against listing density on the ranked population,
-the four Crete anchors claim 10,089 / 6,201 / 5,920 / 3,567 listings, which is a coherent split
-of the island's four sub-markets rather than an artefact of where the points were placed.
+"distance to the centre" would place a Chania apartment 150 km from downtown and rank it as
+remote. Each market therefore gets an **anchor set** and the feature is the distance to the
+*nearest* one; Crete's four anchors reproduce the island's four sub-markets.
 
-**Coordinates are pinned constants, never geocoded at runtime.** No ``geopy``, no network call:
-the landmarks do not move, and a feature that depends on a rate-limited service is not
-reproducible. Airbnb jitters published coordinates by 0-150 m, so distances are rounded to
-:data:`DISTANCE_PRECISION` decimal places of a kilometre — anything finer is precision the
-source does not have.
+**Coordinates are pinned constants, never geocoded at runtime.** The landmarks do not move, and a
+feature depending on a rate-limited service is not reproducible. Airbnb jitters published
+coordinates by 0-150 m, so distances are rounded to :data:`DISTANCE_PRECISION` decimal places of
+a kilometre — anything finer is precision the source does not have.
 
-**Two of the three features are conditioners.** Measured within-group variance ratios:
-``km_to_nearest_anchor`` and ``density_1km`` are near-constant inside a query group, because a
-group is one neighbourhood and geography is smooth across it. They condition rather than rank —
-the same role as ``room_type`` and ``city``. The one that discriminates is
-``km_to_neighbourhood_centroid``: it measures how peripheral a listing is *within its own
-municipality*, which is exactly the variation a group preserves.
+**Two of the three features are conditioners.** ``km_to_nearest_anchor`` and ``density_1km`` are
+near-constant inside a query group, because a group is one neighbourhood and geography is smooth
+across it, so they condition rather than rank. The one that discriminates is
+``km_to_neighbourhood_centroid``: how peripheral a listing is *within its own municipality*,
+which is exactly the variation a group preserves.
 
-**Density is an aggregate over listings, so step 4's rule applies**: it is a leave-one-out count
-by construction — a listing is never its own neighbour. It is legitimate and structural (it
-counts supply, not the target), unlike the neighbourhood mean-label aggregate that
-``features/aggregates.py`` refuses to build.
+**Density is leave-one-out by construction** — a listing is never its own neighbour — and is
+legitimate because it counts supply rather than the target, unlike the neighbourhood mean-label
+aggregate ``features/aggregates.py`` refuses to build.
 
 **A stated limitation in Crete.** Distance to the nearest town centre conflates "remote
-countryside villa" with "beach resort 25 km from Heraklion" — the second is a destination, not a
-remote spot. ``km_to_neighbourhood_centroid`` is the complement that does not suffer from it,
-because it is measured against the listing's own municipality rather than against a town.
+countryside villa" with "beach resort 25 km from Heraklion", which is a destination rather than a
+remote spot. ``km_to_neighbourhood_centroid`` is the complement that does not suffer from it.
 
-Convention, matching ``rental_ranking.data``: pure transforms, no I/O and no ``main()``.
+Pure transforms, no I/O and no ``main()``.
 """
 
 import numpy as np
@@ -52,11 +46,9 @@ DENSITY_RADIUS_KM = 1.0
 
 #: Per-market anchor sets, ``city -> ((name, latitude, longitude), ...)``.
 #:
-#: One anchor each for the two cities, whose bounding boxes are 13.5 x 17.8 and 9.0 x 7.0 km.
-#: **Four for Crete**, which is a region: Chania, Rethymno, Heraklion and Agios Nikolaos are its
-#: four population and tourism centres, and the nearest-anchor split reproduces the island's
-#: sub-markets. Thessaloniki's anchor sits between the White Tower and Aristotelous Square, the
-#: two ends of its seafront core.
+#: One anchor each for the two cities. **Four for Crete**, which is a region: Chania, Rethymno,
+#: Heraklion and Agios Nikolaos are its population and tourism centres. Thessaloniki's anchor sits
+#: between the White Tower and Aristotelous Square, the two ends of its seafront core.
 #:
 #: Precision is deliberate: these are town centres to ~100 m, which is finer than the 0-150 m
 #: jitter already present in every listing's own coordinates.
@@ -106,11 +98,10 @@ def km_to_nearest_anchor(
     The full ``n x k`` matrix per market, then a row minimum — ``k`` is at most 4, so the matrix
     is trivial and there is no reason to loop over listings.
 
-    **The identity of the nearest anchor is deliberately not returned.** Measured, it varies
-    inside only 43 of 393 query groups, it is constant outside Crete by construction, and within
-    Crete 79 % of neighbourhoods map to exactly one anchor — so it is a coarsening of
-    ``neighbourhood_cleansed``, which is already a query-group key column. The distance carries
-    the geography continuously; the label would only repeat a key.
+    **The identity of the nearest anchor is deliberately not returned.** It is constant outside
+    Crete by construction, and inside Crete most neighbourhoods map to exactly one anchor — so it
+    is a coarsening of ``neighbourhood_cleansed``, already a query-group key column. The distance
+    carries the geography continuously; the label would only repeat a key.
 
     Args:
         listings: Frame carrying ``city``, ``latitude`` and ``longitude``.
@@ -155,11 +146,11 @@ def km_to_neighbourhood_centroid(
     genuinely varies inside a query group, because a group *is* a neighbourhood and this measures
     position within it.
 
-    The centroid excludes the listing itself, per step 4's rule: it is an aggregate over
-    listings, and including the row moves the target it is measured against. Unlike the
-    neighbourhood mean-label aggregate the correction is safe here, because the aggregated
-    quantity is position rather than the target. Mean coordinates rather than a true spherical
-    centroid: over a municipality the difference is far below the 0-150 m coordinate jitter.
+    The centroid excludes the listing itself: it is an aggregate over listings, and including the
+    row moves the target it is measured against. The correction is safe here, unlike on the
+    neighbourhood mean-label aggregate, because the aggregated quantity is position rather than
+    the target. Mean coordinates rather than a true spherical centroid — over a municipality the
+    difference is far below the coordinate jitter.
 
     Returns NaN for a listing alone in its neighbourhood — a centroid of nothing is undefined,
     not the listing's own position, which would silently read as distance zero.

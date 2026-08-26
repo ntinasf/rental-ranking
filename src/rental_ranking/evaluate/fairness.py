@@ -2,40 +2,31 @@
 
 This module exists because **NDCG cannot see the thing it measures.** NDCG@10 asks whether the
 top ten are good; it does not ask *who* is in them. A cohort can be displaced systematically
-down every group without the first screen getting any worse, because the listings that replace
-them are equally good. Measured on the development pool (2026-08-22): listings from large
-operators sit **0.113 of a group lower** than their grade warrants, in 79 % of groups — and the
-score offset that would correct it is **zero**, chosen independently on all four folds. The
-disparity is real, consistent, dose-responsive, and invisible to the project's headline metric.
+down every group without the first screen getting any worse, because the listings replacing them
+are equally good. Measured, listings from large operators sit a tenth of a group lower than their
+grade warrants, in most groups — and the score offset that would correct it is **zero** on every
+fold. The disparity is real, consistent, dose-responsive, and invisible to the headline metric.
 
-That is the whole argument for a separate exposure measurement rather than a slice of the
-existing one. A finding that showed up in NDCG would have been caught in Phase 3.
-
-Four decisions are load-bearing, and each was a way to get this wrong:
+Four decisions are load-bearing, each a way to get this wrong:
 
 * **Truth is the grade, not the raw label.** ``grade`` is what the ranker was trained on;
   ``blocked_fraction_90`` is finer. Commercial listings sit slightly lower *inside* their grade
-  bands (−0.017 to −0.055 by band), so measuring against the label scores the model for a
-  coarsening it was never asked to undo and confounds that with a cohort penalty. Measured both
-  ways the gap is −0.1035 against the label and **−0.1126 against the grade** — the disparity is
-  not the coarsening, and using the training target is the conservative choice besides.
-* **Position is normalised by group length.** Groups run 11 to 2,088 listings here. Ten places
-  in a group of twelve is a different event from ten places in a group of two thousand, and an
-  unnormalised displacement would let the largest groups write the answer.
-* **The gap is paired inside a query group.** The same group supplies both cohorts, so
-  neighbourhood, room type and capacity tier are held fixed by construction — they are the group
-  key. Pooling across groups instead would let cohort composition drive the result.
+  bands, so measuring against the label scores the model for a coarsening it was never asked to
+  undo and confounds that with a cohort penalty.
+* **Position is normalised by group length.** Groups run 11 to 2,088 listings, and ten places in
+  a group of twelve is a different event from ten places in a group of two thousand.
+* **The gap is paired inside a query group**, so neighbourhood, room type and capacity tier are
+  held fixed by construction — they are the group key. Pooling across groups would let cohort
+  composition drive the result.
 * **Groups of ``k`` or fewer are excluded.** Every listing in them reaches the first screen under
-  any ranking whatsoever, so they carry exactly no exposure information and including them
-  dilutes every estimate toward zero. This is the same failure as normalising by what appeared
-  rather than what was available, which ``exposure._normalised_entropy`` already guards.
+  any ranking whatsoever, so each contributes an exact zero and dilutes every estimate toward
+  "no effect".
 
 **Direction is not harm.** The measured disparity runs *toward* single-listing hosts, which few
-readers would call an injustice. The finding is about the blind spot, not the cohort: the same
-machinery would have hidden the same disparity along an axis where it did matter, and nothing in
-the accuracy report would have said so.
+readers would call an injustice. The finding is about the blind spot rather than the cohort: the
+same machinery would have hidden the same disparity along an axis where it did matter.
 
-Pure transforms, as everywhere in ``evaluate/`` — no I/O and no ``main()``.
+Pure transforms — no I/O and no ``main()``.
 """
 
 from __future__ import annotations
@@ -47,8 +38,8 @@ import pandas as pd
 
 from rental_ranking.evaluate.metrics import DEFAULT_K, bootstrap_ci
 
-#: What a listing *deserves* is read from here. The training target, deliberately — see the
-#: module docstring. Pass ``blocked_fraction_90`` only to reproduce the sensitivity check.
+#: What a listing *deserves* is read from here: the training target, deliberately — see the
+#: module docstring.
 DEFAULT_TRUTH = "grade"
 
 #: Listings a cohort needs inside a group before its rate there means anything. A reach computed
@@ -56,11 +47,9 @@ DEFAULT_TRUTH = "grade"
 #: weight.
 MIN_COHORT_MEMBERS = 3
 
-#: Host-scale cut used for the headline cohort, in ``calculated_host_listings_count`` — Inside
-#: Airbnb's own within-region count, which the data dictionary names the commercialisation
-#: feature. **The threshold is reported, never selected**: the gap is negative and its interval
-#: excludes zero at every cut from 2 to 50 (−0.093 to −0.118), and :func:`dose_response` needs no
-#: threshold at all. Five is the midpoint of that ladder, not its argmax.
+#: Host-scale cut for the headline cohort, in ``calculated_host_listings_count``. **The threshold
+#: is reported, never selected**: the gap is negative and its interval excludes zero at every cut
+#: from 2 to 50, and :func:`dose_response` needs no threshold at all.
 COMMERCIAL_THRESHOLD = 5
 
 
@@ -117,10 +106,8 @@ def informative_groups(groups: pd.Series, k: int = DEFAULT_K) -> pd.Series:
     """Rows whose group is large enough for first-screen exposure to be a question at all.
 
     In a group of ``k`` or fewer every listing reaches the first screen under any ranking, a
-    shuffle included, so such groups carry no information about who the ranker favours. They are
-    not merely uninformative but actively harmful to an estimate: each contributes an exact zero
-    to every disparity, pulling the average toward "no effect" in proportion to how many there
-    are. On the current key that is 82 of 319 development groups.
+    shuffle included, so such groups carry no information about who the ranker favours — and each
+    contributes an exact zero to every disparity, pulling the average toward "no effect".
 
     Returns:
         Boolean Series aligned to ``groups``.
@@ -242,8 +229,8 @@ def dose_response(
 ) -> pd.DataFrame:
     """Mean displacement per band of a continuous cohort variable — **no threshold at all**.
 
-    The answer to "did you pick the cut that gave you the finding". A monotone trend across
-    bands is evidence a single threshold cannot supply, and it costs one more groupby.
+    The answer to "did you pick the cut that gave you the finding": a monotone trend across bands
+    is evidence a single threshold cannot supply.
 
     Args:
         displaced: Per-row displacement from :func:`displacement`.

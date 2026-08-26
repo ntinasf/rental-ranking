@@ -2,50 +2,39 @@
 
 **Gain importance answers a different question than the one people read it for.** It says which
 features the trees split on, not what the model would lose without them — and when features are
-correlated those diverge sharply. The establishment block carries 29.5 % of total gain, yet a
-model denied it entirely still reaches 0.7031 against the full model's 0.7209. Only a refit on a
+correlated those diverge sharply: the establishment block carries nearly a third of total gain,
+yet a model denied it entirely gives up only a fraction of that in NDCG. Only a refit on a
 restricted feature set settles it, which is what this module runs.
 
 Four decisions, each of which was a way to get the table wrong:
 
 * **Every ablation is cross-validated, never refitted-and-rescored.** The numbers are out-of-fold
-  on the development pool, so each group is scored by the fold model that held it out. That is
-  what makes them comparable to the out-of-fold headline rather than to the sealed one, and it is
-  why ``full (61)`` here reproduces that headline exactly.
+  on the development pool, so each group is scored by the fold model that held it out — which is
+  what makes them comparable to the out-of-fold headline rather than to the sealed one.
 * **Differences are paired over the same groups.** ``comparison_table`` takes every ranker at once
   and takes ``vs_full`` per group, so the columns compare two orderings of the same listings
   rather than two separately-computed averages.
 * **The frozen baselines are not ablations and are excluded.** A heuristic has no feature set, so
-  it cannot answer "what does the model lose without this block". It also adds nothing: the
-  review-count baseline's difference against the full model is the reported headline with the sign
-  flipped. It sat in this table until 2026-08-22 and could not be read as anything but a ninth
-  ablation.
+  it cannot answer "what does the model lose without this block", and its difference against the
+  full model is just the reported headline with the sign flipped.
 * **Blocks are derived from the shipped columns by rule, not typed out by hand** — except
   :data:`ESTABLISHMENT`, which is a definition rather than a prefix. A new feature therefore joins
   its block automatically instead of quietly escaping every ablation in the table.
 
-**Establishment is not the review block**, and the difference is the whole point of the provenance
-argument in notebook 04 §7. It excludes the six ``review_scores_*`` columns and includes
-``host_tenure_months``: establishment is *how long this listing has been running and how much
-traffic it has seen*, not *how good it is*. Quality is a separate thing and stays in the model.
-The eight below carry **0.2945** of total gain, which is the 29.5 % the notebook reports; taking
-``rating_shrunk`` instead of ``host_tenure_months`` gives 0.3080 and is the wrong set.
+**Establishment is not the review block.** It excludes the six ``review_scores_*`` columns and
+includes ``host_tenure_months``: establishment is *how long this listing has been running and how
+much traffic it has seen*, not *how good it is*. Quality is a separate thing and stays in the
+model.
 
 **One row is a different matrix, not a different subset.** ``amenities: flags`` re-encodes the
 amenity block as binaries over a 50-amenity vocabulary, so it cannot be expressed as a column
-selection and needs the raw ``amenities`` lists the feature table does not carry. Which vocabulary
-was used had never been written down; it was recovered on 2026-08-22 by rebuilding both candidates
-and scoring them — ``frequency`` reproduces the reported **0.7260** exactly, and
-``within_group_variance`` gives 0.7188, so the criterion is identified rather than assumed.
+selection and needs the raw ``amenities`` lists the feature table does not carry.
 :func:`flags_out_of_fold` rebuilds it, and :func:`main` folds the row back in when the processed
-layer is available.
+layer is available. What is pinned is the **criterion and the size**, not the fifty strings:
+fitting the vocabulary on the whole ranked population already keeps the feature set independent
+of the split, and re-fitting is the behaviour a rebuild should have when the snapshot changes.
 
-What is pinned here is the **criterion and the size**, not the fifty strings. ``fit_vocabulary``
-asks to be pinned so the feature set cannot depend on the split; fitting on the whole ranked
-population satisfies that already, and re-fitting is the behaviour a rebuild should have when the
-snapshot changes.
-
-Convention, matching ``train/sweep.py``: pure functions, with I/O confined to :func:`main`.
+Pure functions, with I/O confined to :func:`main`.
 """
 
 from __future__ import annotations
@@ -73,7 +62,7 @@ ESTABLISHMENT: tuple[str, ...] = (
     "has_reviews",
 )
 
-#: Prefix rules for the blocks that *are* derivable, mirroring the split used in notebook 03 §3.
+#: Prefix rules for the blocks that *are* derivable, mirroring the feature-block split.
 #: ``price_vs_nbhd`` is a neighbourhood feature that does not carry the prefix, so it is named.
 _BLOCK_RULES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     "amenities": (("amenity_",), ()),
@@ -81,9 +70,8 @@ _BLOCK_RULES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     "neighbourhood": (("nbhd_",), ("price_vs_nbhd",)),
 }
 
-#: The flag encoding's vocabulary, as parameters rather than as fifty pasted strings. Recovered by
-#: reproduction on 2026-08-22: at k=50, ``frequency`` gives the reported 0.7260 on 92 features and
-#: ``within_group_variance`` gives 0.7188, so this is the pair that was actually used.
+#: The flag encoding's vocabulary, as parameters rather than as fifty pasted strings — the
+#: criterion and the size are what is pinned, so a rebuild re-fits the strings themselves.
 FLAG_VOCABULARY_SIZE = 50
 FLAG_VOCABULARY_CRITERION = "frequency"
 
@@ -300,7 +288,7 @@ def flags_out_of_fold(
 
 
 def main() -> None:
-    """Rebuild the table and write it where notebook 04 reads it from."""
+    """Rebuild the ablation table and write it to ``data/train/``."""
     import argparse
 
     from rental_ranking.data import paths
