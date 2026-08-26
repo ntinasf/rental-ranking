@@ -1,0 +1,174 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns:xlink="http://www.w3.org/1999/xlink" width="940" height="1300" viewBox="0 0 940 1300" role="img"
+         aria-label="The features/build.py orchestrator chains label, filters, price imputation, grading and grouping, fans out into four feature blocks, assembles and checks the matrix, and writes the feature table that is registered as an Azure data asset.">
+
+      <rect class="box-art" x="25" y="20" width="270" height="56" rx="6"></rect>
+      <text class="st at" x="41" y="42">calendar.parquet</text>
+      <text class="sm" x="41" y="60">17,023,611 rows</text>
+
+      <rect class="box-art" x="335" y="20" width="270" height="56" rx="6"></rect>
+      <text class="st at" x="351" y="42">listings.parquet</text>
+      <text class="sm" x="351" y="60">46,635 rows</text>
+
+      <rect class="box-art" x="645" y="20" width="270" height="56" rx="6"></rect>
+      <text class="st at" x="661" y="42">reviews.parquet</text>
+      <text class="sm" x="661" y="60">read as (listing_id, date) only</text>
+
+      <rect class="cnt" x="25" y="104" width="890" height="1086" rx="10"></rect>
+      <text class="st" x="45" y="128">features/build.py</text>
+      <text class="sm" x="205" y="128">— the orchestrator · the order is not negotiable · the only writer of data/features/</text>
+
+      <line class="flow" x1="160" y1="76" x2="160" y2="142" marker-end="url(#arrowhead)"></line>
+      <text class="lab" x="170" y="112">17.0 M rows</text>
+      <line class="flow" x1="470" y1="76" x2="470" y2="254" marker-end="url(#arrowhead)"></line>
+      <text class="lab" x="480" y="170">46,635 listings</text>
+
+      <rect class="box-mod" x="60" y="146" width="400" height="88" rx="6"></rect>
+      <text class="st" x="74" y="166">label.py — occupancy_label</text>
+      <text class="sl" x="74" y="185">T = min(calendar.date), per listing — never per city</text>
+      <text class="sl" x="74" y="201">blocked_fraction_90 = 1 − available nights / 90, forward window</text>
+      <text class="sm" x="74" y="217">raises unless every label window is exactly 90 rows</text>
+
+      <line class="flow" x1="260" y1="234" x2="260" y2="254" marker-end="url(#arrowhead)"></line>
+      <text class="lab" x="74" y="249">labels, indexed by listing_id</text>
+
+      <rect class="box-mod" x="60" y="258" width="440" height="54" rx="6"></rect>
+      <text class="st-plain" x="74" y="279">⋈ inner merge on id — 46,635 rows</text>
+      <text class="sm" x="74" y="297">the labels of the 5 calendar-orphan ids drop out here</text>
+
+      <line class="flow" x1="280" y1="312" x2="280" y2="338" marker-end="url(#arrowhead)"></line>
+
+      <rect class="box-mod" x="60" y="342" width="440" height="104" rx="6"></rect>
+      <text class="st" x="74" y="362">filters.py — filter_listings · four rules</text>
+      <text class="sl" x="74" y="381">inactive 699 · long-term 69 · dormant 1,503 · extreme price 25</text>
+      <text class="sl" x="74" y="397">overlap 343 → −1,951 rows (4.2 %), identical thresholds per city</text>
+      <text class="sm" x="74" y="413">the rules read the label to define the population — reported</text>
+      <text class="sm" x="74" y="429">before/after in validation, never as a feature</text>
+
+      <line class="flow" x1="280" y1="446" x2="280" y2="472" marker-end="url(#arrowhead)"></line>
+      <text class="lab" x="292" y="464">44,684 — the count never changes again</text>
+
+      <rect class="box-mod" x="60" y="476" width="440" height="88" rx="6"></rect>
+      <text class="st" x="74" y="496">price.py — impute_price · structural cascade</text>
+      <text class="sl" x="74" y="515">median of city × nbhd × room × accommodates (692) → × tier (2) → … → city (0)</text>
+      <text class="sl" x="74" y="531">fill written into price → 0 NaN reaches the matrix</text>
+      <text class="sm" x="74" y="547">never a has-price flag, never NaN to LightGBM — missingness tracks the label</text>
+
+      <line class="flow" x1="280" y1="564" x2="280" y2="590" marker-end="url(#arrowhead)"></line>
+
+      <rect class="box-mod" x="60" y="594" width="440" height="104" rx="6"></rect>
+      <text class="st" x="74" y="614">label.py — assign_grades · scheme E</text>
+      <text class="sl" x="74" y="633">label 0.0 → grade 0 · the rest quartiled on value within city × room_type</text>
+      <text class="sl" x="74" y="649">cells under 30 interior rows grade within city (2 cells, 31 rows)</text>
+      <text class="sl" x="74" y="665">shares 3.4 / 24.6 / 24.1 / 24.4 / 23.4 · identical labels share a grade</text>
+      <text class="sm" x="74" y="681">price feeds no part of the target</text>
+
+      <line class="flow" x1="280" y1="698" x2="280" y2="724" marker-end="url(#arrowhead)"></line>
+
+      <rect class="box-mod" x="60" y="728" width="440" height="104" rx="6"></rect>
+      <text class="st" x="74" y="748">groups.py — query_group · cluster_id</text>
+      <text class="sl" x="74" y="767">city × nbhd × room × capacity tier, min 5 · the fallback pools the</text>
+      <text class="sl" x="74" y="783">fallers, never re-opens a settled group · 44,395 / 255 / 34 →</text>
+      <text class="sl" x="74" y="799">393 groups · 0 singletons</text>
+      <text class="sm" x="74" y="815">cluster_id = host + point (4 dp) + capacity → 41,148 · split key, never a filter</text>
+
+      <rect class="box-note" x="540" y="342" width="355" height="88" rx="6"></rect>
+      <text class="nt" x="554" y="362">why this order</text>
+      <text class="sl" x="554" y="381">Filters run before imputation and grading, so every</text>
+      <text class="sl" x="554" y="397">quantile — the cascade medians, the grade cuts — is</text>
+      <text class="sl" x="554" y="413">computed on the population that is actually ranked.</text>
+      <line class="tie" x1="500" y1="386" x2="540" y2="386"></line>
+
+      <rect class="box-gate" x="540" y="594" width="355" height="88" rx="6"></rect>
+      <text class="gt" x="554" y="614">coarsening gate</text>
+      <text class="sl" x="554" y="633">The grading partition must coarsen the query-group key,</text>
+      <text class="sl" x="554" y="649">so a grade can never oppose the label inside a group.</text>
+      <text class="sl" x="554" y="665">Checked at runtime · recomputed: 0 inversions in 393.</text>
+      <line class="tie" x1="500" y1="640" x2="540" y2="640"></line>
+
+      <rect class="box-gate" x="540" y="728" width="355" height="88" rx="6"></rect>
+      <text class="gt" x="554" y="748">rung gate</text>
+      <text class="sl" x="554" y="767">Every fallback rung must keep city + room_type; dropping</text>
+      <text class="sl" x="554" y="783">one would grade two populations inside one query group.</text>
+      <text class="sl" x="554" y="799">Raises rather than trusting the constant.</text>
+      <line class="tie" x1="500" y1="774" x2="540" y2="774"></line>
+
+      <line class="flow" x1="280" y1="832" x2="280" y2="856"></line>
+      <line class="flow" x1="142" y1="856" x2="802" y2="856"></line>
+      <line class="flow" x1="142" y1="856" x2="142" y2="900" marker-end="url(#arrowhead)"></line>
+      <line class="flow" x1="362" y1="856" x2="362" y2="900" marker-end="url(#arrowhead)"></line>
+      <line class="flow" x1="582" y1="856" x2="582" y2="900" marker-end="url(#arrowhead)"></line>
+      <line class="flow" x1="802" y1="856" x2="802" y2="900" marker-end="url(#arrowhead)"></line>
+      <text class="lab" x="292" y="850">the ranked frame — 44,684 rows</text>
+
+      <rect class="box-mod" x="40" y="904" width="205" height="122" rx="6"></rect>
+      <text class="st" x="52" y="922" style="font-size:11.8px">listing.py + amenities.py</text>
+      <text class="sl" x="52" y="940">41 cols — structural 11 ·</text>
+      <text class="sl" x="52" y="956">host 10 · amenity buckets 20</text>
+      <text class="sl" x="52" y="972">counts from a label-blind map</text>
+      <text class="sm" x="52" y="988">98.9 % of 1.74 M mentions</text>
+      <text class="sm" x="52" y="1004">blocklist re-checked here</text>
+
+      <rect class="box-mod" x="260" y="904" width="205" height="122" rx="6"></rect>
+      <text class="st" x="272" y="922" style="font-size:11.8px">aggregates.py</text>
+      <text class="sl" x="272" y="940">3 cols — nbhd_listings,</text>
+      <text class="sl" x="272" y="956">nbhd_median_price, price_vs_nbhd</text>
+      <text class="sl" x="272" y="972">leave-one-out, always</text>
+      <text class="sm" x="272" y="988">no label aggregate at any scale:</text>
+      <text class="sm" x="272" y="1004">LOO on the label leaks (ρ −1.000)</text>
+
+      <rect class="box-mod" x="480" y="904" width="205" height="122" rx="6"></rect>
+      <text class="st" x="492" y="922" style="font-size:11.8px">spatial.py</text>
+      <text class="sl" x="492" y="940">3 cols — km_to_nearest_anchor,</text>
+      <text class="sl" x="492" y="956">km_to_nbhd_centroid (LOO),</text>
+      <text class="sl" x="492" y="972">density_1km (LOO, KD-tree)</text>
+      <text class="sm" x="492" y="988">anchors pinned: 1 per city,</text>
+      <text class="sm" x="492" y="1004">4 for Crete — a region</text>
+
+      <rect class="box-mod" x="700" y="904" width="205" height="122" rx="6"></rect>
+      <text class="st" x="712" y="922" style="font-size:11.8px">reviews.py</text>
+      <text class="sl" x="712" y="940">14 cols — all strictly pre-T</text>
+      <text class="sl" x="712" y="956">rating_shrunk: LOO city prior,</text>
+      <text class="sl" x="712" y="972">k = 20 · has_reviews · ages NaN</text>
+      <text class="sl" x="712" y="988">for never-reviewed · same-season</text>
+      <text class="sm" x="712" y="1004">window closes 275 d before T</text>
+
+      <polyline class="flow" points="780,76 780,90 926,90 926,965 909,965" marker-end="url(#arrowhead)"></polyline>
+      <text class="lab" x="810" y="86">listing_id · date only</text>
+
+      <line class="flow" x1="142" y1="1026" x2="142" y2="1050"></line>
+      <line class="flow" x1="362" y1="1026" x2="362" y2="1050"></line>
+      <line class="flow" x1="582" y1="1026" x2="582" y2="1050"></line>
+      <line class="flow" x1="802" y1="1026" x2="802" y2="1050"></line>
+      <line class="flow" x1="142" y1="1050" x2="802" y2="1050"></line>
+      <line class="flow" x1="340" y1="1050" x2="340" y2="1070" marker-end="url(#arrowhead)"></line>
+
+      <rect class="box-mod" x="60" y="1074" width="560" height="104" rx="6"></rect>
+      <text class="st" x="74" y="1094">assemble.py — assemble_feature_table</text>
+      <text class="sl" x="74" y="1113">concat blocks → stable sort by query_group → fresh positional index</text>
+      <text class="sl" x="74" y="1129">check_feature_table, five raises: ① no blocklist column (read live</text>
+      <text class="sl" x="74" y="1145">from columns.py) ② no phase-1 diagnostic ③ one row per id</text>
+      <text class="sl" x="74" y="1161">④ contiguous group runs ⑤ no null identifier / target</text>
+
+      <rect class="box-note" x="660" y="1074" width="235" height="104" rx="6"></rect>
+      <text class="nt" x="674" y="1094">the one-line rule</text>
+      <text class="sl" x="674" y="1113">The trainer takes its inputs from</text>
+      <text class="sl" x="674" y="1129">feature_columns(), never from</text>
+      <text class="sl" x="674" y="1145">table.columns — the difference is</text>
+      <text class="sl" x="674" y="1161">the features vs the answer.</text>
+
+      <line class="flow" x1="340" y1="1178" x2="340" y2="1212" marker-end="url(#arrowhead)"></line>
+
+      <rect class="box-art" x="60" y="1216" width="480" height="68" rx="6"></rect>
+      <text class="st at" x="76" y="1240">feature_table.parquet — 44,684 × 66</text>
+      <text class="sl" x="76" y="1260">61 features + 3 identifiers + 2 targets · 393 contiguous groups</text>
+      <text class="sm" x="76" y="1276">data/features/ — rebuilt in one command</text>
+
+      <rect class="box-art" x="600" y="1216" width="310" height="68" rx="6"></rect>
+      <text class="st at" x="616" y="1240">Azure asset features:2026.08.17</text>
+      <text class="sl" x="616" y="1260">declared in pipelines/data/feature_table.yml</text>
+      <text class="sm" x="616" y="1276">tags: raw versions · git · shape · pii=false</text>
+
+      <line class="flow" x1="540" y1="1250" x2="596" y2="1250" marker-end="url(#arrowhead)"></line>
+      <text class="lab" x="544" y="1242">registered</text>
+    </svg>

@@ -1,6 +1,6 @@
 $schema: https://azuremlschemas.azureedge.net/latest/managedOnlineEndpoint.schema.json
 
-# ⚠ BUILD_GUIDE gotcha #6: a managed endpoint bills per hour for its instance whether or not a
+# ⚠ A managed endpoint bills per hour for its instance whether or not a
 # single request arrives. This is the only resource in the project with a meter that runs while
 # you are not looking. The rule is deploy -> invoke -> screenshot -> DELETE, same session:
 #

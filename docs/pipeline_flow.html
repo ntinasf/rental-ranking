@@ -1,0 +1,664 @@
+<title>Raw to Ranked</title>
+<style>
+  :root {
+    --bg: #f5f6f4;
+    --surface: #ffffff;
+    --ink: #212a2e;
+    --muted: #5b6a71;
+    --line: #d8dedb;
+    --flow: #74838a;
+    --accent: #14688e;
+    --accent-tint: #edf3f6;
+    --artifact: #8a6410;
+    --artifact-tint: #f7f0dd;
+    --gate: #9c3f36;
+    --gate-tint: #f7e9e6;
+    --ok: #2e7d4f;
+    --ok-tint: #e7f1ea;
+    --warn: #a3660f;
+    --warn-tint: #f7efdc;
+    --display: "Avenir Next", "Avenir", "Segoe UI", system-ui, -apple-system, sans-serif;
+    --body: "Avenir Next", "Avenir", "Segoe UI", system-ui, -apple-system, sans-serif;
+    --mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #14181a;
+      --surface: #1d2427;
+      --ink: #e4e9e8;
+      --muted: #97a4a7;
+      --line: #32403f;
+      --flow: #82969c;
+      --accent: #5cb0d3;
+      --accent-tint: #16303c;
+      --artifact: #d0a749;
+      --artifact-tint: #2f2610;
+      --gate: #d98177;
+      --gate-tint: #38201c;
+      --ok: #6cc08f;
+      --ok-tint: #182f20;
+      --warn: #d8a45c;
+      --warn-tint: #302510;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #14181a;
+    --surface: #1d2427;
+    --ink: #e4e9e8;
+    --muted: #97a4a7;
+    --line: #32403f;
+    --flow: #82969c;
+    --accent: #5cb0d3;
+    --accent-tint: #16303c;
+    --artifact: #d0a749;
+    --artifact-tint: #2f2610;
+    --gate: #d98177;
+    --gate-tint: #38201c;
+    --ok: #6cc08f;
+    --ok-tint: #182f20;
+    --warn: #d8a45c;
+    --warn-tint: #302510;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--body);
+    font-size: 15.5px;
+    line-height: 1.55;
+    margin: 0;
+    padding: 0 20px 64px;
+  }
+  .wrap { max-width: 1060px; margin: 0 auto; }
+
+  header.masthead { padding: 44px 0 8px; border-bottom: 2px solid var(--ink); }
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+  }
+  h1 {
+    font-family: var(--display);
+    font-size: clamp(30px, 5vw, 42px);
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    margin: 6px 0 10px;
+    text-wrap: balance;
+  }
+  .standfirst { max-width: 68ch; color: var(--muted); margin: 0 0 18px; }
+  .stamps { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 22px; }
+  .stamp {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    padding: 4px 10px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: var(--surface);
+    color: var(--muted);
+    white-space: nowrap;
+  }
+  .stamp.good { border-color: var(--ok); color: var(--ok); background: var(--ok-tint); }
+
+  section { margin-top: 44px; }
+  .kicker {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 4px;
+  }
+  h2 {
+    font-family: var(--display);
+    font-size: 24px;
+    font-weight: 700;
+    margin: 0 0 8px;
+    text-wrap: balance;
+  }
+  section > p { max-width: 70ch; }
+  p.note { color: var(--muted); font-size: 14px; max-width: 76ch; }
+
+  figure { margin: 18px 0 0; }
+  .scroll { overflow-x: auto; padding-bottom: 6px; }
+  .scroll svg { min-width: 900px; width: 100%; height: auto; display: block; }
+  figcaption { font-size: 13.5px; color: var(--muted); max-width: 78ch; margin-top: 8px; }
+
+  /* SVG vocabulary */
+  .box-mod  { fill: var(--surface); stroke: var(--accent); stroke-width: 1.4; }
+  .box-art  { fill: var(--artifact-tint); stroke: var(--artifact); stroke-width: 1.4; }
+  .box-gate { fill: var(--gate-tint); stroke: var(--gate); stroke-width: 1.2; }
+  .box-note { fill: var(--accent-tint); stroke: var(--accent); stroke-width: 1; stroke-dasharray: 3 3; }
+  .cnt      { fill: none; stroke: var(--accent); stroke-width: 1.1; stroke-dasharray: 6 5; opacity: 0.75; }
+  .flow     { stroke: var(--flow); stroke-width: 1.3; fill: none; }
+  .tie      { stroke: var(--flow); stroke-width: 1; stroke-dasharray: 2.5 3; fill: none; }
+  #arrowhead path { fill: var(--flow); }
+  svg text  { font-family: var(--body); fill: var(--ink); }
+  .st  { font-size: 12.5px; font-weight: 600; font-family: var(--mono); }
+  .st-plain { font-size: 12.5px; font-weight: 600; }
+  .sl  { font-size: 11.2px; }
+  .sm  { font-size: 11.2px; fill: var(--muted); }
+  .lab { font-size: 10.6px; fill: var(--muted); font-family: var(--mono); }
+  .cap { font-size: 11.4px; fill: var(--muted); }
+  .gt  { fill: var(--gate); font-weight: 600; font-size: 11.6px; }
+  .at  { fill: var(--artifact); }
+  .nt  { fill: var(--accent); font-weight: 600; font-size: 11.6px; }
+
+  /* Column census bar */
+  .census { margin-top: 16px; }
+  .bar { display: flex; height: 40px; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: var(--surface); }
+  .seg { min-width: 14px; border-right: 1px solid var(--bg); }
+  .seg:last-child { border-right: none; }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 10px; font-size: 13px; }
+  .legend span { display: inline-flex; align-items: center; gap: 7px; color: var(--muted); }
+  .legend i { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+  .legend b { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+
+  table { border-collapse: collapse; width: 100%; font-size: 13.5px; margin-top: 14px; }
+  .tablewrap { overflow-x: auto; }
+  th {
+    text-align: left; font-family: var(--mono); font-size: 11px; letter-spacing: 0.1em;
+    text-transform: uppercase; color: var(--muted); font-weight: 600;
+    padding: 8px 14px 8px 0; border-bottom: 2px solid var(--ink);
+  }
+  td { padding: 8px 14px 8px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+  td.mono, .mono { font-family: var(--mono); font-size: 12.5px; }
+  td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  tr.grp td {
+    border-bottom: 1px solid var(--line); padding-top: 18px;
+    font-family: var(--mono); font-size: 11px; letter-spacing: 0.12em;
+    text-transform: uppercase; color: var(--accent); font-weight: 600;
+  }
+  .ok-mark { color: var(--ok); font-weight: 700; }
+
+  .findings { display: grid; gap: 12px; margin-top: 16px; }
+  .finding {
+    border: 1px solid var(--line); border-left: 4px solid var(--warn);
+    background: var(--surface); border-radius: 6px; padding: 12px 16px; font-size: 14px;
+  }
+  .finding b { font-family: var(--mono); font-size: 12.5px; }
+  .finding p { margin: 6px 0 0; color: var(--muted); max-width: 90ch; }
+
+  .cmds { background: var(--surface); border: 1px solid var(--line); border-radius: 6px;
+          padding: 14px 18px; font-family: var(--mono); font-size: 12.5px; line-height: 1.9;
+          overflow-x: auto; margin-top: 14px; white-space: pre; }
+  .cmds i { color: var(--muted); font-style: normal; }
+
+  footer { margin-top: 52px; padding-top: 16px; border-top: 1px solid var(--line);
+           font-size: 13px; color: var(--muted); }
+  a { color: var(--accent); }
+  a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+</style>
+
+<div class="wrap">
+
+<header class="masthead">
+  <div class="eyebrow">rental-ranking · data-flow reference</div>
+  <h1>Raw to Ranked</h1>
+  <p class="standfirst">
+    How three Inside Airbnb snapshots become the 44,684 × 66 matrix LightGBM will train on:
+    every module on the path, the gates that guard it, and the numbers that changed along the way.
+    The target is a <em>demand proxy</em> — forward availability, never "bookings".
+  </p>
+  <div class="stamps">
+    <span class="stamp good">rebuild = shipped parquet, byte-identical</span>
+    <span class="stamp">44,684 listings · 61 features · 393 query groups</span>
+    <span class="stamp">asset features:2026.08.17</span>
+  </div>
+</header>
+
+<section>
+  <div class="kicker">layer 1</div>
+  <h2>Snapshots to the processed parquets</h2>
+  <p>
+    One orchestrator chains three pure transforms per city and entity, runs the checks no single
+    frame can see, and is the only code that writes <span class="mono">data/processed/</span>.
+    Preprocessing is lossless: apart from de-duplicating listing ids, every suspicious value is
+    warned about once, with a count, and kept.
+  </p>
+
+  <figure>
+    <div class="scroll">
+    <svg viewBox="0 0 940 600" role="img"
+         aria-label="Three raw city snapshots flow through io, anonymize and clean inside the data/build.py orchestrator, past three cross-frame gates, into three processed parquet files.">
+      <defs>
+        <marker id="arrowhead" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z"></path>
+        </marker>
+      </defs>
+
+      <text class="cap" x="25" y="16">data/raw/&lt;city&gt;/&lt;release&gt;/ — immutable · fetched + sha256-manifested by download.py · registered as Azure assets raw-&lt;city&gt;</text>
+
+      <rect class="box-art" x="25" y="28" width="270" height="78" rx="6"></rect>
+      <text class="st at" x="41" y="50">thessaloniki · 2026-06-29</text>
+      <text class="sl" x="41" y="70">4,965 listings</text>
+      <text class="sm" x="41" y="88">listings · calendar · reviews · nbhds</text>
+
+      <rect class="box-art" x="335" y="28" width="270" height="78" rx="6"></rect>
+      <text class="st at" x="351" y="50">athens · 2026-06-28</text>
+      <text class="sl" x="351" y="70">14,337 listings</text>
+      <text class="sm" x="351" y="88">listings · calendar · reviews · nbhds</text>
+
+      <rect class="box-art" x="645" y="28" width="270" height="78" rx="6"></rect>
+      <text class="st at" x="661" y="50">crete · 2026-06-29</text>
+      <text class="sl" x="661" y="70">27,333 listings</text>
+      <text class="sm" x="661" y="88">listings · calendar · reviews · nbhds</text>
+
+      <line class="flow" x1="160" y1="106" x2="160" y2="142" marker-end="url(#arrowhead)"></line>
+      <line class="flow" x1="470" y1="106" x2="470" y2="142" marker-end="url(#arrowhead)"></line>
+      <line class="flow" x1="780" y1="106" x2="780" y2="142" marker-end="url(#arrowhead)"></line>
+
+      <rect class="cnt" x="25" y="146" width="890" height="300" rx="10"></rect>
+      <text class="st" x="45" y="170">data/build.py</text>
+      <text class="sm" x="180" y="170">— the orchestrator: per city × entity, listings first · the only writer of data/processed/</text>
+
+      <rect class="box-mod" x="45" y="192" width="260" height="98" rx="6"></rect>
+      <text class="st" x="59" y="212">io.py — load_raw</text>
+      <text class="sl" x="59" y="231">ID dtypes pinned: int64, raises on null</text>
+      <text class="sl" x="59" y="247">license read as string (leading zeros)</text>
+      <text class="sm" x="59" y="263">filename derived from the download URL</text>
+
+      <rect class="box-mod" x="335" y="192" width="260" height="98" rx="6"></rect>
+      <text class="st" x="349" y="212">anonymize.py</text>
+      <text class="sl" x="349" y="231">PII dropped · ids → salted SHA-256, 12 hex</text>
+      <text class="sl" x="349" y="247">nulls never hashed · same salt everywhere</text>
+      <text class="sm" x="349" y="263">derives host_is_local · license_status + hash</text>
+
+      <rect class="box-mod" x="625" y="192" width="260" height="98" rx="6"></rect>
+      <text class="st" x="639" y="212">clean.py</text>
+      <text class="sl" x="639" y="231">prices, dates, booleans, amenities parsed</text>
+      <text class="sl" x="639" y="247">bathrooms from text · tenure months derived</text>
+      <text class="sm" x="639" y="263">dedup on id = only row drop · else warn + keep</text>
+
+      <line class="flow" x1="305" y1="241" x2="331" y2="241" marker-end="url(#arrowhead)"></line>
+      <line class="flow" x1="595" y1="241" x2="621" y2="241" marker-end="url(#arrowhead)"></line>
+
+      <text class="gt" x="45" y="322">cross-frame gates — each raises, never warns</text>
+
+      <rect class="box-gate" x="45" y="332" width="260" height="94" rx="6"></rect>
+      <text class="st-plain" x="59" y="352" style="font-size:12px">schema equality across cities</text>
+      <text class="sl" x="59" y="371">columns must match the first city before</text>
+      <text class="sl" x="59" y="387">concat — drift would union silently and</text>
+      <text class="sl" x="59" y="403">widen the table with nulls</text>
+
+      <rect class="box-gate" x="335" y="332" width="260" height="94" rx="6"></rect>
+      <text class="st-plain" x="349" y="352" style="font-size:12px">listing ids disjoint across cities</text>
+      <text class="sl" x="349" y="371">no 12-hex digest may appear in two</text>
+      <text class="sl" x="349" y="387">markets — a collision silently merges</text>
+      <text class="sl" x="349" y="403">two listings in every downstream join</text>
+
+      <rect class="box-gate" x="625" y="332" width="260" height="94" rx="6"></rect>
+      <text class="st-plain" x="639" y="352" style="font-size:12px">join integrity ≥ 99 %</text>
+      <text class="sl" x="639" y="371">calendar &amp; review listing_ids must resolve;</text>
+      <text class="sl" x="639" y="387">salt or dtype drift resolves nothing at all</text>
+      <text class="sl" x="639" y="403">known: 5 + 1 Athens orphan ids → warn</text>
+
+      <line class="flow" x1="470" y1="446" x2="470" y2="482" marker-end="url(#arrowhead)"></line>
+      <text class="lab" x="482" y="468">write per entity, then release memory</text>
+
+      <rect class="box-art" x="25" y="486" width="270" height="72" rx="6"></rect>
+      <text class="st at" x="41" y="510">listings.parquet</text>
+      <text class="sl" x="41" y="530">46,635 × 58</text>
+      <text class="sm" x="41" y="546">+ city and per-row scrape_date</text>
+
+      <rect class="box-art" x="335" y="486" width="270" height="72" rx="6"></rect>
+      <text class="st at" x="351" y="510">calendar.parquet</text>
+      <text class="sl" x="351" y="530">17,023,611 × 3</text>
+      <text class="sm" x="351" y="546">listing_id · date · available</text>
+
+      <rect class="box-art" x="645" y="486" width="270" height="72" rx="6"></rect>
+      <text class="st at" x="661" y="510">reviews.parquet</text>
+      <text class="sl" x="661" y="530">1,765,618 × 4</text>
+      <text class="sm" x="661" y="546">listing_id · id · date · comments</text>
+
+      <text class="cap" x="25" y="586">data/processed/ — one parquet per entity, cities concatenated · local only: never committed, never registered</text>
+    </svg>
+    </div>
+    <figcaption>
+      Figure 1 — the lossless layer. Three city snapshots pass through the same three transforms;
+      the orchestrator alone sees more than one frame at a time, which is why the three gates live
+      in it and nowhere else.
+    </figcaption>
+  </figure>
+</section>
+
+<section>
+  <div class="kicker">layer 2</div>
+  <h2>Processed parquets to the feature matrix</h2>
+  <p>
+    The second orchestrator mirrors the first: pure transforms, chained in an order that is part
+    of the contract, with the filesystem touched only at the very end. Row count changes exactly
+    once — at the filters — and every quantile downstream of them is computed on the population
+    that will actually be ranked.
+  </p>
+
+  <figure>
+    <div class="scroll">
+    <svg viewBox="0 0 940 1300" role="img"
+         aria-label="The features/build.py orchestrator chains label, filters, price imputation, grading and grouping, fans out into four feature blocks, assembles and checks the matrix, and writes the feature table that is registered as an Azure data asset.">
+
+      <rect class="box-art" x="25" y="20" width="270" height="56" rx="6"></rect>
+      <text class="st at" x="41" y="42">calendar.parquet</text>
+      <text class="sm" x="41" y="60">17,023,611 rows</text>
+
+      <rect class="box-art" x="335" y="20" width="270" height="56" rx="6"></rect>
+      <text class="st at" x="351" y="42">listings.parquet</text>
+      <text class="sm" x="351" y="60">46,635 rows</text>
+
+      <rect class="box-art" x="645" y="20" width="270" height="56" rx="6"></rect>
+      <text class="st at" x="661" y="42">reviews.parquet</text>
+      <text class="sm" x="661" y="60">read as (listing_id, date) only</text>
+
+      <rect class="cnt" x="25" y="104" width="890" height="1086" rx="10"></rect>
+      <text class="st" x="45" y="128">features/build.py</text>
+      <text class="sm" x="205" y="128">— the orchestrator · the order is not negotiable · the only writer of data/features/</text>
+
+      <line class="flow" x1="160" y1="76" x2="160" y2="142" marker-end="url(#arrowhead)"></line>
+      <text class="lab" x="170" y="112">17.0 M rows</text>
+      <line class="flow" x1="470" y1="76" x2="470" y2="254" marker-end="url(#arrowhead)"></line>
+      <text class="lab" x="480" y="170">46,635 listings</text>
+
+      <rect class="box-mod" x="60" y="146" width="400" height="88" rx="6"></rect>
+      <text class="st" x="74" y="166">label.py — occupancy_label</text>
+      <text class="sl" x="74" y="185">T = min(calendar.date), per listing — never per city</text>
+      <text class="sl" x="74" y="201">blocked_fraction_90 = 1 − available nights / 90, forward window</text>
+      <text class="sm" x="74" y="217">raises unless every label window is exactly 90 rows</text>
+
+      <line class="flow" x1="260" y1="234" x2="260" y2="254" marker-end="url(#arrowhead)"></line>
+      <text class="lab" x="74" y="249">labels, indexed by listing_id</text>
+
+      <rect class="box-mod" x="60" y="258" width="440" height="54" rx="6"></rect>
+      <text class="st-plain" x="74" y="279">⋈ inner merge on id — 46,635 rows</text>
+      <text class="sm" x="74" y="297">the labels of the 5 calendar-orphan ids drop out here</text>
+
+      <line class="flow" x1="280" y1="312" x2="280" y2="338" marker-end="url(#arrowhead)"></line>
+
+      <rect class="box-mod" x="60" y="342" width="440" height="104" rx="6"></rect>
+      <text class="st" x="74" y="362">filters.py — filter_listings · four rules</text>
+      <text class="sl" x="74" y="381">inactive 699 · long-term 69 · dormant 1,503 · extreme price 25</text>
+      <text class="sl" x="74" y="397">overlap 343 → −1,951 rows (4.2 %), identical thresholds per city</text>
+      <text class="sm" x="74" y="413">the rules read the label to define the population — reported</text>
+      <text class="sm" x="74" y="429">before/after in validation, never as a feature</text>
+
+      <line class="flow" x1="280" y1="446" x2="280" y2="472" marker-end="url(#arrowhead)"></line>
+      <text class="lab" x="292" y="464">44,684 — the count never changes again</text>
+
+      <rect class="box-mod" x="60" y="476" width="440" height="88" rx="6"></rect>
+      <text class="st" x="74" y="496">price.py — impute_price · structural cascade</text>
+      <text class="sl" x="74" y="515">median of city × nbhd × room × accommodates (692) → × tier (2) → … → city (0)</text>
+      <text class="sl" x="74" y="531">fill written into price → 0 NaN reaches the matrix</text>
+      <text class="sm" x="74" y="547">never a has-price flag, never NaN to LightGBM — missingness tracks the label</text>
+
+      <line class="flow" x1="280" y1="564" x2="280" y2="590" marker-end="url(#arrowhead)"></line>
+
+      <rect class="box-mod" x="60" y="594" width="440" height="104" rx="6"></rect>
+      <text class="st" x="74" y="614">label.py — assign_grades · scheme E</text>
+      <text class="sl" x="74" y="633">label 0.0 → grade 0 · the rest quartiled on value within city × room_type</text>
+      <text class="sl" x="74" y="649">cells under 30 interior rows grade within city (2 cells, 31 rows)</text>
+      <text class="sl" x="74" y="665">shares 3.4 / 24.6 / 24.1 / 24.4 / 23.4 · identical labels share a grade</text>
+      <text class="sm" x="74" y="681">price feeds no part of the target</text>
+
+      <line class="flow" x1="280" y1="698" x2="280" y2="724" marker-end="url(#arrowhead)"></line>
+
+      <rect class="box-mod" x="60" y="728" width="440" height="104" rx="6"></rect>
+      <text class="st" x="74" y="748">groups.py — query_group · cluster_id</text>
+      <text class="sl" x="74" y="767">city × nbhd × room × capacity tier, min 5 · the fallback pools the</text>
+      <text class="sl" x="74" y="783">fallers, never re-opens a settled group · 44,395 / 255 / 34 →</text>
+      <text class="sl" x="74" y="799">393 groups · 0 singletons</text>
+      <text class="sm" x="74" y="815">cluster_id = host + point (4 dp) + capacity → 41,148 · split key, never a filter</text>
+
+      <rect class="box-note" x="540" y="342" width="355" height="88" rx="6"></rect>
+      <text class="nt" x="554" y="362">why this order</text>
+      <text class="sl" x="554" y="381">Filters run before imputation and grading, so every</text>
+      <text class="sl" x="554" y="397">quantile — the cascade medians, the grade cuts — is</text>
+      <text class="sl" x="554" y="413">computed on the population that is actually ranked.</text>
+      <line class="tie" x1="500" y1="386" x2="540" y2="386"></line>
+
+      <rect class="box-gate" x="540" y="594" width="355" height="88" rx="6"></rect>
+      <text class="gt" x="554" y="614">coarsening gate</text>
+      <text class="sl" x="554" y="633">The grading partition must coarsen the query-group key,</text>
+      <text class="sl" x="554" y="649">so a grade can never oppose the label inside a group.</text>
+      <text class="sl" x="554" y="665">Checked at runtime · recomputed: 0 inversions in 393.</text>
+      <line class="tie" x1="500" y1="640" x2="540" y2="640"></line>
+
+      <rect class="box-gate" x="540" y="728" width="355" height="88" rx="6"></rect>
+      <text class="gt" x="554" y="748">rung gate</text>
+      <text class="sl" x="554" y="767">Every fallback rung must keep city + room_type; dropping</text>
+      <text class="sl" x="554" y="783">one would grade two populations inside one query group.</text>
+      <text class="sl" x="554" y="799">Raises rather than trusting the constant.</text>
+      <line class="tie" x1="500" y1="774" x2="540" y2="774"></line>
+
+      <line class="flow" x1="280" y1="832" x2="280" y2="856"></line>
+      <line class="flow" x1="142" y1="856" x2="802" y2="856"></line>
+      <line class="flow" x1="142" y1="856" x2="142" y2="900" marker-end="url(#arrowhead)"></line>
+      <line class="flow" x1="362" y1="856" x2="362" y2="900" marker-end="url(#arrowhead)"></line>
+      <line class="flow" x1="582" y1="856" x2="582" y2="900" marker-end="url(#arrowhead)"></line>
+      <line class="flow" x1="802" y1="856" x2="802" y2="900" marker-end="url(#arrowhead)"></line>
+      <text class="lab" x="292" y="850">the ranked frame — 44,684 rows</text>
+
+      <rect class="box-mod" x="40" y="904" width="205" height="122" rx="6"></rect>
+      <text class="st" x="52" y="922" style="font-size:11.8px">listing.py + amenities.py</text>
+      <text class="sl" x="52" y="940">41 cols — structural 11 ·</text>
+      <text class="sl" x="52" y="956">host 10 · amenity buckets 20</text>
+      <text class="sl" x="52" y="972">counts from a label-blind map</text>
+      <text class="sm" x="52" y="988">98.9 % of 1.74 M mentions</text>
+      <text class="sm" x="52" y="1004">blocklist re-checked here</text>
+
+      <rect class="box-mod" x="260" y="904" width="205" height="122" rx="6"></rect>
+      <text class="st" x="272" y="922" style="font-size:11.8px">aggregates.py</text>
+      <text class="sl" x="272" y="940">3 cols — nbhd_listings,</text>
+      <text class="sl" x="272" y="956">nbhd_median_price, price_vs_nbhd</text>
+      <text class="sl" x="272" y="972">leave-one-out, always</text>
+      <text class="sm" x="272" y="988">no label aggregate at any scale:</text>
+      <text class="sm" x="272" y="1004">LOO on the label leaks (ρ −1.000)</text>
+
+      <rect class="box-mod" x="480" y="904" width="205" height="122" rx="6"></rect>
+      <text class="st" x="492" y="922" style="font-size:11.8px">spatial.py</text>
+      <text class="sl" x="492" y="940">3 cols — km_to_nearest_anchor,</text>
+      <text class="sl" x="492" y="956">km_to_nbhd_centroid (LOO),</text>
+      <text class="sl" x="492" y="972">density_1km (LOO, KD-tree)</text>
+      <text class="sm" x="492" y="988">anchors pinned: 1 per city,</text>
+      <text class="sm" x="492" y="1004">4 for Crete — a region</text>
+
+      <rect class="box-mod" x="700" y="904" width="205" height="122" rx="6"></rect>
+      <text class="st" x="712" y="922" style="font-size:11.8px">reviews.py</text>
+      <text class="sl" x="712" y="940">14 cols — all strictly pre-T</text>
+      <text class="sl" x="712" y="956">rating_shrunk: LOO city prior,</text>
+      <text class="sl" x="712" y="972">k = 20 · has_reviews · ages NaN</text>
+      <text class="sl" x="712" y="988">for never-reviewed · same-season</text>
+      <text class="sm" x="712" y="1004">window closes 275 d before T</text>
+
+      <polyline class="flow" points="780,76 780,90 926,90 926,965 909,965" marker-end="url(#arrowhead)"></polyline>
+      <text class="lab" x="810" y="86">listing_id · date only</text>
+
+      <line class="flow" x1="142" y1="1026" x2="142" y2="1050"></line>
+      <line class="flow" x1="362" y1="1026" x2="362" y2="1050"></line>
+      <line class="flow" x1="582" y1="1026" x2="582" y2="1050"></line>
+      <line class="flow" x1="802" y1="1026" x2="802" y2="1050"></line>
+      <line class="flow" x1="142" y1="1050" x2="802" y2="1050"></line>
+      <line class="flow" x1="340" y1="1050" x2="340" y2="1070" marker-end="url(#arrowhead)"></line>
+
+      <rect class="box-mod" x="60" y="1074" width="560" height="104" rx="6"></rect>
+      <text class="st" x="74" y="1094">assemble.py — assemble_feature_table</text>
+      <text class="sl" x="74" y="1113">concat blocks → stable sort by query_group → fresh positional index</text>
+      <text class="sl" x="74" y="1129">check_feature_table, five raises: ① no blocklist column (read live</text>
+      <text class="sl" x="74" y="1145">from columns.py) ② no phase-1 diagnostic ③ one row per id</text>
+      <text class="sl" x="74" y="1161">④ contiguous group runs ⑤ no null identifier / target</text>
+
+      <rect class="box-note" x="660" y="1074" width="235" height="104" rx="6"></rect>
+      <text class="nt" x="674" y="1094">the one-line rule</text>
+      <text class="sl" x="674" y="1113">The trainer takes its inputs from</text>
+      <text class="sl" x="674" y="1129">feature_columns(), never from</text>
+      <text class="sl" x="674" y="1145">table.columns — the difference is</text>
+      <text class="sl" x="674" y="1161">the features vs the answer.</text>
+
+      <line class="flow" x1="340" y1="1178" x2="340" y2="1212" marker-end="url(#arrowhead)"></line>
+
+      <rect class="box-art" x="60" y="1216" width="480" height="68" rx="6"></rect>
+      <text class="st at" x="76" y="1240">feature_table.parquet — 44,684 × 66</text>
+      <text class="sl" x="76" y="1260">61 features + 3 identifiers + 2 targets · 393 contiguous groups</text>
+      <text class="sm" x="76" y="1276">data/features/ — rebuilt in one command</text>
+
+      <rect class="box-art" x="600" y="1216" width="310" height="68" rx="6"></rect>
+      <text class="st at" x="616" y="1240">Azure asset features:2026.08.17</text>
+      <text class="sl" x="616" y="1260">declared in pipelines/data/feature_table.yml</text>
+      <text class="sm" x="616" y="1276">tags: raw versions · git · shape · pii=false</text>
+
+      <line class="flow" x1="540" y1="1250" x2="596" y2="1250" marker-end="url(#arrowhead)"></line>
+      <text class="lab" x="544" y="1242">registered</text>
+    </svg>
+    </div>
+    <figcaption>
+      Figure 2 — the modelling layer. The lane on the left is the fixed order label → filters →
+      price → grades; the row of four blocks is the feature build. Row count changes once
+      (filters), price is the only value ever imputed, and the two gates on the right are the
+      runtime checks that keep the target consistent with the label inside every query group.
+    </figcaption>
+  </figure>
+</section>
+
+<section>
+  <div class="kicker">the matrix</div>
+  <h2>What the 66 columns are</h2>
+  <p>
+    Three roles, kept apart on purpose: identifiers join and group, targets are trained against,
+    everything else is an input. <span class="mono">feature_columns()</span> is the only
+    sanctioned way to read the feature list.
+  </p>
+  <div class="census">
+    <div class="bar" aria-hidden="true">
+      <div class="seg" style="flex: 3;  background: var(--muted);" title="identifiers — 3"></div>
+      <div class="seg" style="flex: 2;  background: var(--gate);" title="targets — 2"></div>
+      <div class="seg" style="flex: 11; background: color-mix(in srgb, var(--accent) 92%, var(--surface));" title="structural — 11"></div>
+      <div class="seg" style="flex: 10; background: color-mix(in srgb, var(--accent) 76%, var(--surface));" title="host — 10"></div>
+      <div class="seg" style="flex: 20; background: color-mix(in srgb, var(--accent) 60%, var(--surface));" title="amenity — 20"></div>
+      <div class="seg" style="flex: 14; background: color-mix(in srgb, var(--accent) 44%, var(--surface));" title="review — 14"></div>
+      <div class="seg" style="flex: 3;  background: color-mix(in srgb, var(--accent) 30%, var(--surface));" title="neighbourhood — 3"></div>
+      <div class="seg" style="flex: 3;  background: color-mix(in srgb, var(--accent) 18%, var(--surface));" title="spatial — 3"></div>
+    </div>
+    <div class="legend">
+      <span><i style="background: var(--muted);"></i><b>3</b> identifiers — id · query_group · cluster_id</span>
+      <span><i style="background: var(--gate);"></i><b>2</b> targets — grade · blocked_fraction_90</span>
+      <span><i style="background: color-mix(in srgb, var(--accent) 92%, var(--surface));"></i><b>11</b> structural</span>
+      <span><i style="background: color-mix(in srgb, var(--accent) 76%, var(--surface));"></i><b>10</b> host</span>
+      <span><i style="background: color-mix(in srgb, var(--accent) 60%, var(--surface));"></i><b>20</b> amenity</span>
+      <span><i style="background: color-mix(in srgb, var(--accent) 44%, var(--surface));"></i><b>14</b> review</span>
+      <span><i style="background: color-mix(in srgb, var(--accent) 30%, var(--surface));"></i><b>3</b> neighbourhood</span>
+      <span><i style="background: color-mix(in srgb, var(--accent) 18%, var(--surface));"></i><b>3</b> spatial</span>
+    </div>
+  </div>
+  <p class="note">
+    Nothing in the feature block is imputed — <span class="mono">price</span> is the project's
+    sole imputed column, filled upstream for a reason that does not generalise. Nulls that remain
+    are honest: review cohort 16.3 %, bedrooms 7.5 %, beds 3.7 %, bathrooms_shared 0.1 %, one
+    lone-neighbourhood row. Group-key columns (<span class="mono">city</span>,
+    <span class="mono">room_type</span>) ride along as conditioners — constant inside a group,
+    they can separate no pair.
+  </p>
+</section>
+
+<section>
+  <div class="kicker">module reference</div>
+  <h2>Who owns what</h2>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>module</th><th>owns</th><th>the invariant it enforces</th></tr></thead>
+    <tbody>
+      <tr class="grp"><td colspan="3">data layer — src/rental_ranking/data/</td></tr>
+      <tr><td class="mono">download.py</td><td>fetch + sha256 manifest per snapshot</td><td>raw is forever; files never edited; works offline from Azure</td></tr>
+      <tr><td class="mono">paths.py</td><td>filesystem layout</td><td>root = $RENTAL_RANKING_ROOT → nearest pyproject.toml</td></tr>
+      <tr><td class="mono">io.py</td><td>reading raw, dtypes pinned</td><td>int64 ids raise on null; a missing pinned column raises</td></tr>
+      <tr><td class="mono">anonymize.py</td><td>PII drop, salted 12-hex hashing</td><td>nulls never hashed; blank salt raises; one salt for every entity</td></tr>
+      <tr><td class="mono">clean.py</td><td>typing, parsing, derivations</td><td>dedup on id is the only row drop; everything else warns once + keeps</td></tr>
+      <tr><td class="mono">columns.py</td><td>the column contract as constants</td><td>every listings column in exactly one disposition (test-pinned)</td></tr>
+      <tr><td class="mono">validate.py</td><td>shared checks</td><td>report, don't delete; one warning with a count, never per row</td></tr>
+      <tr><td class="mono">build.py</td><td>orchestration; writes data/processed/</td><td>schema equality · id disjointness · join resolution ≥ 99 %</td></tr>
+
+      <tr class="grp"><td colspan="3">modelling layer — src/rental_ranking/features/ (+ filters)</td></tr>
+      <tr><td class="mono">label.py</td><td>occupancy_label · assign_grades</td><td>window exactly 90 rows; label ∈ [0,1]; partition coarsens the group key</td></tr>
+      <tr><td class="mono">data/filters.py</td><td>the four exclusion rules</td><td>the only module allowed to exclude rows; per-city counts returned</td></tr>
+      <tr><td class="mono">price.py</td><td>structural median cascade</td><td>raises if the city terminator leaves a null; no row-level rung marker</td></tr>
+      <tr><td class="mono">groups.py</td><td>capacity_tier · query_group · group_sizes · cluster_id</td><td>rungs keep the partition columns; contiguity check catches what the sum cannot</td></tr>
+      <tr><td class="mono">listing.py</td><td>structural + host + categoricals</td><td>blocklist re-checked at the block boundary; host_id is never a feature</td></tr>
+      <tr><td class="mono">amenities.py</td><td>canonicalisation + 19 buckets</td><td>label-blind map, never tuned on an evaluation score; rule order pinned by test</td></tr>
+      <tr><td class="mono">reviews.py</td><td>pre-T windows · rating_shrunk · has_reviews</td><td>anchors passed in, never re-derived; no flag conjoined with a label condition</td></tr>
+      <tr><td class="mono">aggregates.py</td><td>LOO neighbourhood price + count</td><td>no label aggregate at any scale; LOO unconditional; n = 1 → NaN, never 0</td></tr>
+      <tr><td class="mono">spatial.py</td><td>anchors · LOO centroid · LOO density</td><td>coordinates pinned, no network; distances rounded to the jitter</td></tr>
+      <tr><td class="mono">assemble.py</td><td>block concat, sort, the five checks</td><td>feature_columns() is the only feature list; blocklist read live from columns.py</td></tr>
+      <tr><td class="mono">features/build.py</td><td>orchestration; writes data/features/</td><td>label → filters → imputation → grading → grouping → blocks, fixed</td></tr>
+
+      <tr class="grp"><td colspan="3">phase-3 interface — already frozen</td></tr>
+      <tr><td class="mono">evaluate/metrics.py</td><td>NDCG@k · Recall@k · bootstrap CIs</td><td>average over groups, never listings; degenerate groups NaN + counted; ties break on row order</td></tr>
+      <tr><td class="mono">train/baseline.py</td><td>frozen baselines A + B</td><td>test-pinned: A 0.6424 · B 0.6218 · random floor ~0.540 — read every headline against the floor</td></tr>
+      <tr><td class="mono">features/sentiment.py</td><td>Azure AI Language demo</td><td>demonstration only — measured +0.015 within groups; never a model feature</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section>
+  <div class="kicker">audit record · 2026-08-17</div>
+  <h2>What was verified, and how</h2>
+  <p>
+    Static review of every module above against the contract docs, plus dynamic recomputation
+    against the shipped parquets. The strongest check: rebuilding the entire table in memory from
+    <span class="mono">data/processed/</span> reproduced the shipped parquet
+    <strong>byte-identically, values and dtypes</strong> — the registered asset is exactly what
+    the code at HEAD produces.
+  </p>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>invariant</th><th>published</th><th>recomputed</th><th></th></tr></thead>
+    <tbody>
+      <tr><td>table shape / roles</td><td class="num">44,684 × 66 · 61 + 3 + 2</td><td class="num">44,684 × 66 · 61 + 3 + 2</td><td class="ok-mark">✓</td></tr>
+      <tr><td>query groups</td><td class="num">393 · 0 singletons · contiguous</td><td class="num">393 · 0 singletons · contiguous, sum = rows</td><td class="ok-mark">✓</td></tr>
+      <tr><td>group-cascade rung usage</td><td class="num">44,395 / 255 / 34</td><td class="num">44,395 / 255 / 34</td><td class="ok-mark">✓</td></tr>
+      <tr><td>filter removals</td><td class="num">1,951 of 46,635 (4.2 %)</td><td class="num">1,951 — per-rule, per-city counts exact</td><td class="ok-mark">✓</td></tr>
+      <tr><td>imputation cascade fills</td><td class="num">692 / 2 / 0 / 0 / 0</td><td class="num">692 / 2 / 0 / 0 / 0 · price NaN = 0</td><td class="ok-mark">✓</td></tr>
+      <tr><td>grade shares 0…4</td><td class="num">3.4 / 24.6 / 24.1 / 24.4 / 23.4</td><td class="num">3.4 / 24.6 / 24.1 / 24.4 / 23.4</td><td class="ok-mark">✓</td></tr>
+      <tr><td>grade vs label, inside groups</td><td class="num">0 inversions</td><td class="num">0 inversions · 0 tie splits · 10 single-grade groups</td><td class="ok-mark">✓</td></tr>
+      <tr><td>cold-start over-representation</td><td class="num">8.0 % vs 3.4 % (2.38×)</td><td class="num">8.0 % vs 3.4 % (2.38×)</td><td class="ok-mark">✓</td></tr>
+      <tr><td>cluster / group conflict</td><td class="num">76 clusters · 88 groups · 253 listings</td><td class="num">41,148 clusters · 76 · 88 · 253 (0.57 %)</td><td class="ok-mark">✓</td></tr>
+      <tr><td>provenance breach</td><td class="num">26 listings, none material</td><td class="num">26 (5 Athens + 21 Crete, 13 × 1 d + 13 × 2 d) · 0 post-T reviews</td><td class="ok-mark">✓</td></tr>
+      <tr><td>leave-one-out, brute force</td><td class="num">—</td><td class="num">nbhd aggregates 8/8 · density 5/5 · same-season 6/6</td><td class="ok-mark">✓</td></tr>
+      <tr><td>end-to-end rebuild</td><td class="num">—</td><td class="num">byte-identical to the shipped parquet</td><td class="ok-mark">✓</td></tr>
+      <tr><td>suite + lint</td><td class="num">777 tests, 0 skips</td><td class="num">777 passed · ruff lint clean</td><td class="ok-mark">✓</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+</section>
+
+<section>
+  <div class="kicker">operations</div>
+  <h2>Rebuild and references</h2>
+  <div class="cmds"><i># processed layer (needs ANON_SALT in .env)</i>
+uv run python -m rental_ranking.data.build
+
+<i># feature table</i>
+uv run python -m rental_ranking.features.build
+
+<i># register the asset (version = build date)</i>
+az ml data create -f pipelines/data/feature_table.yml \
+  -g nf-rental-ranking -w nf-rental-ranking-ws \
+  --set tags.git=$(git rev-parse --short HEAD)
+
+<i># verify everything</i>
+uv run pytest tests/ -q   <i># 777 · 0 skips</i></div>
+  <p class="note">
+    Contracts this page restates: <span class="mono">docs/data_pipeline_design.md</span> (the
+    data contract) · <span class="mono">docs/data_dictionary.md</span> (raw-column truth) ·
+    <span class="mono">docs/decisions_log.md</span> (every non-trivial choice). When this page and
+    a contract disagree, the contract wins — then fix this page.
+  </p>
+</section>
+
+<footer>
+  Data: Inside Airbnb (CC BY 4.0), snapshots of 2026-06-28/29 · host and reviewer PII stripped or
+  salted-hashed before anything is published · label language everywhere: demand proxy, never
+  "bookings".
+</footer>
+
+</div>

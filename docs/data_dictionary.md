@@ -145,7 +145,7 @@ Null percentages are Thessaloniki / Athens / Crete. Disposition vocabulary:
 | 4 | `last_scraped` | 0/0/0 | **DERIVE** | **[official]** → `scrape_date`. **[verified]** 2–4 distinct values per city; not the release date. |
 | 5 | `source` | 0/0/0 | DROP | **[official]** `city scrape` / `previous scrape`. **[verified]** No variance in Athens; a staleness flag too weak to carry. |
 | 6 | `name` | 0/0/0 | **KEEP** raw | Marketing copy, not host PII. Published notebook cells should not render name-bearing rows gratuitously. |
-| 7 | `description` | 3.4/2.1/2.3 | DROP | **[official]** Dropped for Phase 1–3; a candidate to revisit if Phase 4 adds text features. |
+| 7 | `description` | 3.4/2.1/2.3 | DROP | **[official]** Dropped; a candidate to revisit if text features are ever added. |
 | 8 | `neighborhood_overview` | **100** | DROP | Empty. |
 | 9 | `picture_url` | 0/0/0 | DROP | Not used. |
 
@@ -313,7 +313,7 @@ so the residual seasonal drift does not become a cross-market artefact.
 | `maximum_nights` | DROP | As above. |
 
 There is **no `price` or `adjusted_price` column**. The contract's earlier "keep calendar price,
-decide in Phase 2 whether a window-average asking price is a legitimate feature" question is void
+decide later whether a window-average asking price is a legitimate feature" question is void
 — the data does not exist. Nothing in this project can use a per-date price.
 
 **[verified] Join integrity:** Athens' calendar contains **5 `listing_id`s with no matching
@@ -329,7 +329,7 @@ resolution must be explicit (almost certainly: drop the orphans).
 | `date` | **KEEP** | **[official]** Reviews lag stays by up to 14 days (double-blind window: both parties have 14 days after checkout, and reviews post once both submit or the window closes). |
 | `reviewer_id` | DROP | PII. |
 | `reviewer_name` | DROP | PII. |
-| `comments` | **KEEP** | Multilingual free text; the Phase 4 sentiment input. May contain automated cancellation notices. |
+| `comments` | **KEEP** | Multilingual free text; the sentiment demonstration reads it. May contain automated cancellation notices. |
 
 **[official]** Only public reviews are published, and roughly 50 % of stays leave one — the basis
 of the occupancy model below.
@@ -380,14 +380,14 @@ the whole project:
 4. **Asking-price bias.** Scraped prices are what hosts ask, not what guests paid.
 5. **Review-score missingness is popularity-correlated** — see §4i.
 
-### Query-group sizing — a problem to solve in Phase 1
+### Query-group sizing, a problem the group key has to solve
 
 **[verified]** The intended group key (`city × neighbourhood_cleansed × room_type × capacity
 tier`) will fragment badly: Thessaloniki has only **7** neighbourhoods, and Shared room has
 **3 / 30 / 18** rows across the three cities, with Hotel room absent from Thessaloniki entirely.
 Cross that with capacity tiers and many groups will hold one listing — singleton groups
 contribute nothing to NDCG and waste LambdaMART's gradient. Group construction needs a minimum
-size rule and probably a collapse of rare `room_type`s. The choice belongs to Phase 1; the
+size rule and probably a collapse of rare `room_type`s. The choice belongs with the group key; the
 constraint is recorded here so it is not discovered late.
 
 ---

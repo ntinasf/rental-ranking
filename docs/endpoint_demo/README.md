@@ -1,7 +1,7 @@
 # Endpoint demonstration — what is here, and how to reproduce it
 
-The managed online endpoint is deleted the moment the demonstration ends (BUILD_GUIDE gotcha #6:
-an instance bills per hour whether or not a request arrives). So this directory *is* the
+The managed online endpoint is deleted the moment the demonstration ends, because an instance
+bills per hour whether or not a request arrives. So this directory *is* the
 demonstration. It has to answer the question a screenshot of a live endpoint cannot: **not that a
 service existed, but that the thing it served ranks.**
 
@@ -24,7 +24,7 @@ Picking the query after seeing its NDCG would be the ranking equivalent of repor
 seed. The rule returns one query the model handles poorly (Athens, 0.5976) and it is kept.
 
 Every one of them is in **fold 0**, held out of training, of the hyperparameter sweep, and of
-every model-selection decision in Phase 3.
+every model-selection decision.
 
 ## What to read in `RESULTS.md`
 

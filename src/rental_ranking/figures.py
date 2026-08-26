@@ -24,6 +24,7 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
+from typing import NamedTuple
 
 import matplotlib
 
@@ -55,8 +56,22 @@ NOTEBOOK_FIGURES: dict[str, tuple[str, int, int]] = {
 #: ``<svg>``, no scripts, no external assets. The page stays the editable original — it is what
 #: you open to change the drawing — and ``docs/figures/`` gets the two renderings a Markdown
 #: document can actually embed. Name -> the page it is lifted from.
-HTML_DIAGRAMS: dict[str, str] = {
-    "ab_traffic_split": "ab_traffic_split.html",
+class DiagramSource(NamedTuple):
+    """Where a committed diagram comes from: a page, and which drawing on it.
+
+    A page may hold more than one drawing when they belong together on screen; ``index`` picks
+    one, and every entry names it explicitly so that adding a second drawing to a page can never
+    silently change which one an existing figure renders from.
+    """
+
+    page: str
+    index: int = 0
+
+
+HTML_DIAGRAMS: dict[str, DiagramSource] = {
+    "ab_traffic_split": DiagramSource("ab_traffic_split.html"),
+    "pipeline_processed": DiagramSource("pipeline_flow.html", 0),
+    "pipeline_features": DiagramSource("pipeline_flow.html", 1),
 }
 
 #: Raster width for a diagram, in pixels. The pages are authored around 1240 CSS px, so 1.5x is
@@ -137,7 +152,7 @@ def extract_notebook_figures(
 
 
 def extract_html_diagram(
-    source: Path, out_dir: Path, name: str, width: int = DIAGRAM_WIDTH
+    source: Path, out_dir: Path, name: str, width: int = DIAGRAM_WIDTH, index: int = 0
 ) -> dict[str, Path]:
     """Lift the inline ``<svg>`` out of a hand-drawn HTML page and rasterize it.
 
@@ -150,10 +165,11 @@ def extract_html_diagram(
     composited onto the wrong ground puts a visible patch behind them.
 
     Args:
-        source: The ``.html`` page. Must carry exactly one ``<svg>`` element.
+        source: The ``.html`` page. Must carry at least ``index + 1`` ``<svg>`` elements.
         out_dir: Directory to write into. Created if absent.
         name: Basename for the outputs, without extension.
         width: Raster width in pixels; height follows the viewBox aspect ratio.
+        index: Which drawing on the page to lift, in document order. Defaults to the first.
 
     Returns:
         Extension (``"svg"``, ``"png"``) -> the path written. The PNG is absent if no rasterizer
@@ -161,16 +177,19 @@ def extract_html_diagram(
 
     Raises:
         FileNotFoundError: If the page does not exist.
-        ValueError: If it holds no ``<svg>``, more than one, or no usable ``viewBox``.
+        ValueError: If it holds too few ``<svg>`` elements, or the chosen one has no usable
+            ``viewBox``.
     """
     if not source.exists():
         raise FileNotFoundError(f"diagram page not found: {source}")
     page = source.read_text(encoding="utf-8")
 
     drawings = re.findall(r"<svg\b.*?</svg>", page, re.DOTALL)
-    if len(drawings) != 1:
-        raise ValueError(f"{source.name} holds {len(drawings)} <svg> elements; expected exactly 1")
-    drawing = drawings[0]
+    if index >= len(drawings):
+        raise ValueError(
+            f"{source.name} holds {len(drawings)} <svg> elements; index {index} is out of range"
+        )
+    drawing = drawings[index]
 
     box = re.search(r'viewBox="\s*([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s*"', drawing)
     if box is None:
@@ -349,9 +368,11 @@ def main() -> None:
     for name in extracted:
         print(f"  {name}")
 
-    for name, page in HTML_DIAGRAMS.items():
-        rendered = extract_html_diagram(paths.PROJECT_ROOT / "docs" / page, out_dir, name)
-        print(f"\nrendered {page} -> {', '.join(path.name for path in rendered.values())}")
+    for name, diagram in HTML_DIAGRAMS.items():
+        rendered = extract_html_diagram(
+            paths.PROJECT_ROOT / "docs" / diagram.page, out_dir, name, index=diagram.index
+        )
+        print(f"\nrendered {name} -> {', '.join(path.name for path in rendered.values())}")
 
     # One training run serves both model charts: the sealed table for the headline, and the
     # out-of-fold scores for the cohort analysis.

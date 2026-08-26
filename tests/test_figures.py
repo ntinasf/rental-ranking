@@ -48,22 +48,24 @@ def page(tmp_path: Path) -> Path:
 # --- the rule the module exists to keep ---------------------------------------------------------
 
 
-def test_the_committed_diagram_matches_its_page(tmp_path: Path) -> None:
-    """The committed SVG is what the page currently draws — re-extract and compare."""
-    name, page = next(iter(figures.HTML_DIAGRAMS.items()))
-    source = paths.PROJECT_ROOT / "docs" / page
+@pytest.mark.parametrize("name", sorted(figures.HTML_DIAGRAMS))
+def test_the_committed_diagram_matches_its_page(name: str, tmp_path: Path) -> None:
+    """Every committed SVG is what its page currently draws: re-extract and compare.
+
+    Parametrised over the whole registry rather than one entry, because a page holding two
+    drawings is exactly where an index could silently point at the wrong one.
+    """
+    diagram = figures.HTML_DIAGRAMS[name]
+    source = paths.PROJECT_ROOT / "docs" / diagram.page
     committed = paths.FIGURES_DIR / f"{name}.svg"
     if not source.exists():
-        # The page is gitignored, so a clean clone has the rendering but not the drawing. Skip
-        # rather than fail: there is nothing to compare against, which is not the same as a
-        # mismatch. Un-ignoring the page is what would let this run everywhere.
-        pytest.skip(f"{source} not present; the diagram's source page is not tracked")
+        pytest.skip(f"{source} not present; the diagram's source page is missing")
     if not committed.exists():
         pytest.skip(f"{committed} not built; run: uv run python -m rental_ranking.figures")
 
-    rebuilt = figures.extract_html_diagram(source, tmp_path, name)
+    rebuilt = figures.extract_html_diagram(source, tmp_path, name, index=diagram.index)
     assert rebuilt["svg"].read_text(encoding="utf-8") == committed.read_text(encoding="utf-8"), (
-        f"docs/{page} has changed since {committed.name} was written — "
+        f"docs/{diagram.page} has changed since {committed.name} was written; "
         "re-run: uv run python -m rental_ranking.figures"
     )
 
@@ -126,13 +128,31 @@ def test_a_page_without_a_drawing_raises(tmp_path: Path) -> None:
         figures.extract_html_diagram(source, tmp_path / "out", "empty")
 
 
-def test_a_page_with_two_drawings_raises(tmp_path: Path) -> None:
-    """Picking the first silently would make which figure you get depend on edit order."""
-    source = tmp_path / "two.html"
-    source.write_text(PAGE + PAGE, encoding="utf-8")
+def test_the_index_picks_the_named_drawing(tmp_path: Path) -> None:
+    """A page may hold two drawings; the registry says which one a figure renders from.
 
-    with pytest.raises(ValueError, match="2 <svg>"):
-        figures.extract_html_diagram(source, tmp_path / "out", "two")
+    Which drawing sits at which position is not guaranteed by the extractor, and it does not have
+    to be: the drift test re-extracts every registered figure, so a drawing inserted above another
+    changes the committed SVG and fails loudly rather than swapping a figure in silence.
+    """
+    second = PAGE.replace("candidate set", "second drawing")
+    source = tmp_path / "two.html"
+    source.write_text(PAGE + second, encoding="utf-8")
+
+    first = figures.extract_html_diagram(source, tmp_path / "out", "first", index=0)
+    other = figures.extract_html_diagram(source, tmp_path / "out", "other", index=1)
+
+    assert "candidate set" in first["svg"].read_text(encoding="utf-8")
+    assert "second drawing" in other["svg"].read_text(encoding="utf-8")
+
+
+def test_an_index_past_the_last_drawing_raises(tmp_path: Path) -> None:
+    """Silently returning nothing would commit an empty figure under a real name."""
+    source = tmp_path / "one.html"
+    source.write_text(PAGE, encoding="utf-8")
+
+    with pytest.raises(ValueError, match="out of range"):
+        figures.extract_html_diagram(source, tmp_path / "out", "one", index=1)
 
 
 def test_a_drawing_without_a_viewbox_raises(tmp_path: Path) -> None:
