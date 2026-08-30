@@ -331,6 +331,7 @@ def test_a_local_capture_refuses_to_overwrite_a_live_transcript(monkeypatch, tmp
     command sits three lines away from the live one.
     """
     monkeypatch.setattr(demo.paths, "ENDPOINT_DEMO_DIR", tmp_path)
+    monkeypatch.setattr(demo, "_serving_metadata", lambda: {"features": list(_FEATURES)})
     (tmp_path / "RESULTS.md").write_text(f"Generated against **{demo.LIVE_SOURCE}**.\n")
 
     with pytest.raises(SystemExit, match="only surviving evidence"):
