@@ -40,7 +40,6 @@ testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 100
-extend-exclude = ["data_preprocessing.py", "eda_functions.py"]
 
 [tool.ruff.lint]
 extend-select = ["I"]

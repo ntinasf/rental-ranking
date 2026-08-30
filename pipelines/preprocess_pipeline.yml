@@ -4,7 +4,7 @@ type: pipeline
 # Azure ML PIPELINE job: raw snapshots -> processed layer -> feature table.
 #
 # THIS IS A WORKFLOW DEMONSTRATION, NOT THE BUILD PATH. Development, exploration and training all
-# run locally (CLAUDE.md); this job exists to show one thing the single-step `train_job.yml`
+# run locally by design; this job exists to show one thing the single-step `train_job.yml`
 # cannot — a MULTI-STEP pipeline with a versioned data asset going in, an intermediate flowing
 # between two components, and a feature table coming out. The local build remains canonical.
 #

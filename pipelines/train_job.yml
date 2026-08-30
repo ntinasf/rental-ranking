@@ -4,7 +4,7 @@ type: command
 # Azure ML command job: LambdaMART training.
 #
 # THIS IS A WORKFLOW DEMONSTRATION, NOT THE TRAINING PATH. Development, exploration and training
-# all run locally (CLAUDE.md); this job exists to show one thing end to end — a versioned data
+# all run locally by design; this job exists to show one thing end to end — a versioned data
 # asset goes in, an MLflow run carrying that version comes out. The numbers it produces are NOT
 # canonical: LightGBM's multithreaded histogram construction is not order-guaranteed across a
 # 10-thread macOS ARM build and a 4-vCPU Linux x86 one, so a small divergence from the local

@@ -307,7 +307,12 @@ def test_missing_column_raises_a_readable_keyerror() -> None:
 
 
 def test_real_filter_counts_match_the_contract() -> None:
-    """The counts docs/data_pipeline_design.md publishes; a drift here invalidates the doc."""
+    """The counts the pipeline diagram publishes; a drift here invalidates the figure.
+
+    Those counts are printed inside ``docs/figures/pipeline_features.png``, which is rendered
+    from ``docs/pipeline_flow.html`` and embedded by ``docs/data_pipeline_design.md``. A
+    figure states a number without any way to recheck it, so this test is the recheck.
+    """
     for name in ("listings", "calendar"):
         if not (PROCESSED_DIR / f"{name}.parquet").exists():
             pytest.skip(f"processed layer not on disk: {name}.parquet")

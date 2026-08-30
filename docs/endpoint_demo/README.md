@@ -98,6 +98,5 @@ page footer.
 
 - Screenshots from the live session, including a search the model loses to chance, are in
   [`../screenshots/`](../screenshots/) and discussed in [the report](../report.md).
-- The full redeploy runbook, with timings, costs and the teardown discipline, is
-  [`../azure_setup.md`](../azure_setup.md), step 8. Left running, `Standard_DS2_v2` at
-  $0.1360/hr is about **$98/month**.
+- The redeploy runbook is [`../azure_setup.md`](../azure_setup.md), step 6; the teardown
+  discipline is step 8.

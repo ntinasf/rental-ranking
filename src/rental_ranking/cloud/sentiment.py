@@ -1,9 +1,9 @@
 """The Azure AI Language demonstration: score one query group, cache, and stop.
 
 **This was never run.** No call was ever made to Azure AI Language, and no sentiment number in
-this project comes from it — the demonstration was designed, tested and priced, then descoped
-(see docs/decisions_log.md). Everything here works against a resource in a region that
-offers the sentiment capability; ours does not.
+this project comes from it — the demonstration was designed and tested, then descoped.
+Everything here works against a resource in a region that offers the sentiment capability;
+ours does not.
 
 Nothing calls the API inside a loop over listings — documents are
 batched ten to a request, the service's cap — and raw responses are cached before any
