@@ -1,6 +1,6 @@
 """Column spec for the Inside Airbnb v4.7 schema — constants only, no logic.
 
-The executable form of the column dispositions in docs/data_dictionary.md §4. Every one of the
+The disposition of every column in the raw schema. Every one of the
 90 listings columns appears in exactly one disposition set, enforced by ``test_columns.py``, so
 a schema change in a future snapshot fails loudly instead of passing an unknown column through.
 

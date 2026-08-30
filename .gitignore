@@ -17,16 +17,12 @@ venv/
 # Notebooks
 # ---------------------------------------------------------------------------
 .ipynb_checkpoints/
-
-# Scratch notebooks: exploratory, never published, not held to the run-clean rule
+# Exploratory notebooks.
 notebooks/scratch_*.ipynb
 
 # ---------------------------------------------------------------------------
 # Secrets and credentials
 # ---------------------------------------------------------------------------
-# ANON_SALT lives in .env. A different salt rebuilds every listing id, so losing it
-# means the committed evidence can never be reproduced and leaking it undoes the
-# hashing. .env.example carries the variable names only and is tracked.
 .env
 .env.*
 !.env.example
@@ -36,9 +32,12 @@ notebooks/scratch_*.ipynb
 .azureml/
 config.json
 
-# Per-user tool settings. .claude/settings.json is deliberately tracked: it is the
-# shared pytest-on-edit guardrail, not personal configuration.
-.claude/settings.local.json
+# ---------------------------------------------------------------------------
+# Local tooling
+# ---------------------------------------------------------------------------
+.claude/
+.vscode/
+.idea/
 
 # ---------------------------------------------------------------------------
 # Experiment tracking
@@ -47,7 +46,7 @@ mlruns/
 mlflow.db
 
 # ---------------------------------------------------------------------------
-# Data is never committed (keep only .gitkeep placeholders)
+# Data
 # ---------------------------------------------------------------------------
 data/*
 !data/raw
@@ -59,43 +58,6 @@ data/processed/*
 !data/features
 data/features/*
 !data/features/.gitkeep
-
-# ---------------------------------------------------------------------------
-# Build-process notes, kept local
-#
-# These describe how the project was built rather than what it is. A reader who
-# meets a self-authored roadmap or a status file learns about the plan instead of
-# the system, and learns about absences they would never otherwise notice. The
-# deliverables are the README, docs/report.md, the notebooks and src/.
-# ---------------------------------------------------------------------------
-CLAUDE.md
-docs/BUILD_GUIDE.md
-docs/azure_cli_cheatsheet.md
-NEXT_STEPS*.md
-Phase_2_lessons.md
-ENGINEERING_LESSONS.md
-claude_code_prompt.md
-rules_of_ml.md
-lessons/
-data_preprocessing.py
-
-# ---------------------------------------------------------------------------
-# Diagram sources are TRACKED, deliberately
-#
-# docs/*.html hold the hand-authored originals for the figures in docs/figures/.
-# The rule is that a drawing is never screenshotted: `rental_ranking.figures`
-# extracts the inline <svg> from the page, and tests/test_figures.py re-extracts
-# and fails if page and rendering have drifted. That check skips when the page is
-# missing, so ignoring these files would silently disable it for everyone but the
-# author, and would leave the published PNGs with no editable original in the repo.
-# Do not re-add docs/pipeline_flow.html or docs/ab_traffic_split.html here.
-# ---------------------------------------------------------------------------
-
-# ---------------------------------------------------------------------------
-# Reference papers read while designing. Copyrighted by their publishers, cited
-# in docs/ab_test_design.md, never redistributed.
-# ---------------------------------------------------------------------------
-*.pdf
 
 # ---------------------------------------------------------------------------
 # OS

@@ -150,7 +150,7 @@ def listing_features(
     if blocked:
         raise ValueError(
             f"label-adjacent column(s) reached the feature block: {blocked}. These are forward "
-            "windows or direct reads of the label (docs/data_dictionary.md) and may never be "
+            "windows or direct reads of the label, and may never be "
             "model inputs"
         )
     return features
