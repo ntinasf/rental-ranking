@@ -1,6 +1,160 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns:xlink="http://www.w3.org/1999/xlink" width="940" height="1300" viewBox="0 0 940 1300" role="img"
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="940" height="1300" viewBox="0 0 940 1300" role="img"
          aria-label="The features/build.py orchestrator chains label, filters, price imputation, grading and grouping, fans out into four feature blocks, assembles and checks the matrix, and writes the feature table that is registered as an Azure data asset.">
+<style><![CDATA[
+:root {
+    --bg: #f5f6f4;
+    --surface: #ffffff;
+    --ink: #212a2e;
+    --muted: #5b6a71;
+    --line: #d8dedb;
+    --flow: #74838a;
+    --accent: #14688e;
+    --accent-tint: #edf3f6;
+    --artifact: #8a6410;
+    --artifact-tint: #f7f0dd;
+    --gate: #9c3f36;
+    --gate-tint: #f7e9e6;
+    --ok: #2e7d4f;
+    --ok-tint: #e7f1ea;
+    --warn: #a3660f;
+    --warn-tint: #f7efdc;
+    --display: "Avenir Next", "Avenir", "Segoe UI", system-ui, -apple-system, sans-serif;
+    --body: "Avenir Next", "Avenir", "Segoe UI", system-ui, -apple-system, sans-serif;
+    --mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    background: #f5f6f4;
+    color: #212a2e;
+    font-family: "Avenir Next", "Avenir", "Segoe UI", system-ui, -apple-system, sans-serif;
+    font-size: 15.5px;
+    line-height: 1.55;
+    margin: 0;
+    padding: 0 20px 64px;
+  }
+  .wrap { max-width: 1060px; margin: 0 auto; }
+
+  header.masthead { padding: 44px 0 8px; border-bottom: 2px solid #212a2e; }
+  .eyebrow {
+    font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+    font-size: 11.5px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: #14688e;
+  }
+  h1 {
+    font-family: "Avenir Next", "Avenir", "Segoe UI", system-ui, -apple-system, sans-serif;
+    font-size: clamp(30px, 5vw, 42px);
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    margin: 6px 0 10px;
+    text-wrap: balance;
+  }
+  .standfirst { max-width: 68ch; color: #5b6a71; margin: 0 0 18px; }
+  .stamps { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 22px; }
+  .stamp {
+    font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+    font-size: 11.5px;
+    padding: 4px 10px;
+    border: 1px solid #d8dedb;
+    border-radius: 999px;
+    background: #ffffff;
+    color: #5b6a71;
+    white-space: nowrap;
+  }
+  .stamp.good { border-color: #2e7d4f; color: #2e7d4f; background: #e7f1ea; }
+
+  section { margin-top: 44px; }
+  .kicker {
+    font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+    font-size: 11.5px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: #14688e;
+    margin: 0 0 4px;
+  }
+  h2 {
+    font-family: "Avenir Next", "Avenir", "Segoe UI", system-ui, -apple-system, sans-serif;
+    font-size: 24px;
+    font-weight: 700;
+    margin: 0 0 8px;
+    text-wrap: balance;
+  }
+  section > p { max-width: 70ch; }
+  p.note { color: #5b6a71; font-size: 14px; max-width: 76ch; }
+
+  figure { margin: 18px 0 0; }
+  .scroll { overflow-x: auto; padding-bottom: 6px; }
+  .scroll svg { min-width: 900px; width: 100%; height: auto; display: block; }
+  figcaption { font-size: 13.5px; color: #5b6a71; max-width: 78ch; margin-top: 8px; }
+
+  /* SVG vocabulary */
+  .box-mod  { fill: #ffffff; stroke: #14688e; stroke-width: 1.4; }
+  .box-art  { fill: #f7f0dd; stroke: #8a6410; stroke-width: 1.4; }
+  .box-gate { fill: #f7e9e6; stroke: #9c3f36; stroke-width: 1.2; }
+  .box-note { fill: #edf3f6; stroke: #14688e; stroke-width: 1; stroke-dasharray: 3 3; }
+  .cnt      { fill: none; stroke: #14688e; stroke-width: 1.1; stroke-dasharray: 6 5; opacity: 0.75; }
+  .flow     { stroke: #74838a; stroke-width: 1.3; fill: none; }
+  .tie      { stroke: #74838a; stroke-width: 1; stroke-dasharray: 2.5 3; fill: none; }
+  #arrowhead path { fill: #74838a; }
+  svg text  { font-family: "Avenir Next", "Avenir", "Segoe UI", system-ui, -apple-system, sans-serif; fill: #212a2e; }
+  .st  { font-size: 12.5px; font-weight: 600; font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace; }
+  .st-plain { font-size: 12.5px; font-weight: 600; }
+  .sl  { font-size: 11.2px; }
+  .sm  { font-size: 11.2px; fill: #5b6a71; }
+  .lab { font-size: 10.6px; fill: #5b6a71; font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace; }
+  .cap { font-size: 11.4px; fill: #5b6a71; }
+  .gt  { fill: #9c3f36; font-weight: 600; font-size: 11.6px; }
+  .at  { fill: #8a6410; }
+  .nt  { fill: #14688e; font-weight: 600; font-size: 11.6px; }
+
+  /* Column census bar */
+  .census { margin-top: 16px; }
+  .bar { display: flex; height: 40px; border: 1px solid #d8dedb; border-radius: 6px; overflow: hidden; background: #ffffff; }
+  .seg { min-width: 14px; border-right: 1px solid #f5f6f4; }
+  .seg:last-child { border-right: none; }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 10px; font-size: 13px; }
+  .legend span { display: inline-flex; align-items: center; gap: 7px; color: #5b6a71; }
+  .legend i { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+  .legend b { color: #212a2e; font-weight: 600; font-variant-numeric: tabular-nums; }
+
+  table { border-collapse: collapse; width: 100%; font-size: 13.5px; margin-top: 14px; }
+  .tablewrap { overflow-x: auto; }
+  th {
+    text-align: left; font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace; font-size: 11px; letter-spacing: 0.1em;
+    text-transform: uppercase; color: #5b6a71; font-weight: 600;
+    padding: 8px 14px 8px 0; border-bottom: 2px solid #212a2e;
+  }
+  td { padding: 8px 14px 8px 0; border-bottom: 1px solid #d8dedb; vertical-align: top; }
+  td.mono, .mono { font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace; font-size: 12.5px; }
+  td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  tr.grp td {
+    border-bottom: 1px solid #d8dedb; padding-top: 18px;
+    font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace; font-size: 11px; letter-spacing: 0.12em;
+    text-transform: uppercase; color: #14688e; font-weight: 600;
+  }
+  .ok-mark { color: #2e7d4f; font-weight: 700; }
+
+  .findings { display: grid; gap: 12px; margin-top: 16px; }
+  .finding {
+    border: 1px solid #d8dedb; border-left: 4px solid #a3660f;
+    background: #ffffff; border-radius: 6px; padding: 12px 16px; font-size: 14px;
+  }
+  .finding b { font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace; font-size: 12.5px; }
+  .finding p { margin: 6px 0 0; color: #5b6a71; max-width: 90ch; }
+
+  .cmds { background: #ffffff; border: 1px solid #d8dedb; border-radius: 6px;
+          padding: 14px 18px; font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace; font-size: 12.5px; line-height: 1.9;
+          overflow-x: auto; margin-top: 14px; white-space: pre; }
+  .cmds i { color: #5b6a71; font-style: normal; }
+
+  footer { margin-top: 52px; padding-top: 16px; border-top: 1px solid #d8dedb;
+           font-size: 13px; color: #5b6a71; }
+  a { color: #14688e; }
+  a:focus-visible { outline: 2px solid #14688e; outline-offset: 2px; }
+]]></style>
 
       <rect class="box-art" x="25" y="20" width="270" height="56" rx="6"></rect>
       <text class="st at" x="41" y="42">calendar.parquet</text>
@@ -134,7 +288,7 @@
       <text class="sm" x="712" y="1004">window closes 275 d before T</text>
 
       <polyline class="flow" points="780,76 780,90 926,90 926,965 909,965" marker-end="url(#arrowhead)"></polyline>
-      <text class="lab" x="810" y="86">listing_id · date only</text>
+      <text class="lab" x="915" y="86" text-anchor="end">listing_id · date only</text>
 
       <line class="flow" x1="142" y1="1026" x2="142" y2="1050"></line>
       <line class="flow" x1="362" y1="1026" x2="362" y2="1050"></line>
@@ -147,7 +301,7 @@
       <text class="st" x="74" y="1094">assemble.py — assemble_feature_table</text>
       <text class="sl" x="74" y="1113">concat blocks → stable sort by query_group → fresh positional index</text>
       <text class="sl" x="74" y="1129">check_feature_table, five raises: ① no blocklist column (read live</text>
-      <text class="sl" x="74" y="1145">from columns.py) ② no phase-1 diagnostic ③ one row per id</text>
+      <text class="sl" x="74" y="1145">from columns.py) ② no label-side diagnostic ③ one row per id</text>
       <text class="sl" x="74" y="1161">④ contiguous group runs ⑤ no null identifier / target</text>
 
       <rect class="box-note" x="660" y="1074" width="235" height="104" rx="6"></rect>

@@ -39,11 +39,11 @@ from rental_ranking.train import baseline as bl
 from rental_ranking.train import split
 from rental_ranking.train import train as trainer
 
-#: Which embedded notebook output goes to which report figure. A single cell can emit several
-#: images — a plot rendered plain, then captioned, then echoed as a figure object — so the output
-#: index is part of the address rather than an afterthought.
+#: Which embedded notebook output goes to which report figure. A cell can emit more than one image
+#: — a draft drawn to read statistics off, then the captioned figure — so the output index is part
+#: of the address rather than an afterthought.
 NOTEBOOK_FIGURES: dict[str, tuple[str, int, int]] = {
-    "leak_price_quote_date.png": ("01_data_inventory.ipynb", 28, 2),
+    "leak_price_quote_date.png": ("01_data_inventory.ipynb", 28, 0),
     "query_group_sizes.png": ("01_data_inventory.ipynb", 39, 0),
     "target_atoms.png": ("02_label_validation.ipynb", 13, 0),
     "atom_cohorts.png": ("02_label_validation.ipynb", 15, 0),
@@ -78,6 +78,10 @@ HTML_DIAGRAMS: dict[str, DiagramSource] = {
 #: Raster width for a diagram, in pixels. The pages are authored around 1240 CSS px, so 1.5x is
 #: sharp on a retina screen without doubling the committed bytes.
 DIAGRAM_WIDTH = 1860
+
+#: What an inline drawing needs to become a standalone SVG document. Inside HTML the parser puts
+#: elements in the SVG namespace from the tag name alone; a ``.svg`` file has to say so itself.
+NAMESPACE_DECLARATION = 'xmlns="http://www.w3.org/2000/svg" '
 
 #: The cut-off the whole report is written against: NDCG@10, a first screen of ten.
 FIRST_SCREEN = 10
@@ -152,6 +156,54 @@ def extract_notebook_figures(
     return written
 
 
+def _balanced_block(css: str, start: int) -> int:
+    """Index just past the ``}`` closing the block whose ``{`` is at or after ``start``."""
+    depth = 0
+    for position in range(start, len(css)):
+        if css[position] == "{":
+            depth += 1
+        elif css[position] == "}":
+            depth -= 1
+            if depth == 0:
+                return position + 1
+    return len(css)
+
+
+def flatten_custom_properties(css: str) -> str:
+    """Resolve ``var(--x)`` against the ``:root`` block and drop dark-mode overrides.
+
+    librsvg does not implement CSS custom properties: it parses ``fill: var(--artifact-tint)``,
+    fails to resolve it, and falls back to the SVG default of solid black. The whole palette here
+    is variable-driven, so a rasterized diagram comes out as a sheet of black rectangles — legible
+    enough to look deliberate, which is why it survived. Flattening happens on the way out only.
+    The page keeps its variables and its dark mode; the committed rendering is the light one, which
+    is what the PNG is composited onto.
+
+    Args:
+        css: The page's stylesheet.
+
+    Returns:
+        The same CSS with dark-mode blocks removed and every resolvable ``var()`` substituted.
+    """
+    while (media := re.search(r"@media[^{]*prefers-color-scheme:\s*dark[^{]*\{", css)) is not None:
+        css = css[: media.start()] + css[_balanced_block(css, media.start()) :]
+    css = re.sub(r"[^{}]*\[data-theme=\"dark\"\][^{}]*\{[^{}]*\}", "", css)
+
+    root = re.search(r"(?<![\w-]):root\s*\{([^{}]*)\}", css)
+    palette = dict(re.findall(r"(--[\w-]+)\s*:\s*([^;}]+)", root.group(1) if root else ""))
+
+    def substitute(match: re.Match[str]) -> str:
+        name, _, fallback = match.group(1).partition(",")
+        return palette.get(name.strip(), fallback.strip() or match.group(0))
+
+    for _ in range(len(palette) + 1):  # values may themselves reference other properties
+        flattened = re.sub(r"var\(\s*(--[^()]+?)\s*\)", substitute, css)
+        if flattened == css:
+            break
+        css = flattened
+    return css
+
+
 def extract_html_diagram(
     source: Path, out_dir: Path, name: str, width: int = DIAGRAM_WIDTH, index: int = 0
 ) -> dict[str, Path]:
@@ -197,13 +249,34 @@ def extract_html_diagram(
         raise ValueError(f"{source.name}'s <svg> has no numeric viewBox; cannot size the raster")
     inner_width, inner_height = float(box.group(3)), float(box.group(4))
 
-    # Standalone files need an intrinsic size and the xlink namespace; inside HTML the browser
-    # supplies both. Without them some rasterizers fall back to a 100x100 default.
+    # Standalone files need the SVG namespace, an intrinsic size and the xlink namespace; inside
+    # HTML the parser supplies all three. Without the namespace the file is not an SVG document at
+    # all; without a size some rasterizers fall back to a 100x100 default. A page that already
+    # declares the namespace on its <svg> keeps it — repeating it is an XML parse error, not a
+    # harmless duplicate.
+    namespace = "" if 'xmlns="http://www.w3.org/2000/svg"' in drawing else NAMESPACE_DECLARATION
     header = (
-        f'<svg xmlns:xlink="http://www.w3.org/1999/xlink" '
+        f'<svg {namespace}xmlns:xlink="http://www.w3.org/1999/xlink" '
         f'width="{inner_width:g}" height="{inner_height:g}" '
     )
     drawing = drawing.replace("<svg ", header, 1)
+
+    # The drawing is styled by class, and those classes live in the page's stylesheet, which does
+    # not travel with the element. Left behind, every fill falls back to the SVG default of solid
+    # black and every label to a serif face — a sheet of black rectangles that still passes a "did
+    # it extract" check. So the page-level CSS is carried in with it. It is injected first, so a
+    # drawing carrying its own <style> still wins on equal specificity, and the custom properties
+    # are defined on `:root`, which matches the <svg> element once the drawing stands alone.
+    outside_drawings = re.sub(r"<svg\b.*?</svg>", "", page, flags=re.DOTALL)
+    page_css = flatten_custom_properties(
+        "\n".join(re.findall(r"<style[^>]*>(.*?)</style>", outside_drawings, re.DOTALL))
+    ).strip()
+    if page_css:
+        open_tag = re.match(r"""<svg\b(?:[^>"']|"[^"]*"|'[^']*')*>""", drawing)
+        if open_tag is None:  # pragma: no cover - the tag was just rebuilt above
+            raise ValueError(f"{source.name}'s <svg> open tag is malformed")
+        style = f"\n<style><![CDATA[\n{page_css}\n]]></style>"
+        drawing = drawing[: open_tag.end()] + style + drawing[open_tag.end() :]
 
     out_dir.mkdir(parents=True, exist_ok=True)
     written: dict[str, Path] = {}

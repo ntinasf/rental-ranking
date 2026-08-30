@@ -16,6 +16,7 @@ the PNG because several labels are knocked out against it, and an ambiguous page
 two — must raise rather than silently pick one.
 """
 
+import re
 from pathlib import Path
 
 import pytest
@@ -183,3 +184,57 @@ def test_the_raster_carries_the_page_background(page: Path, tmp_path: Path) -> N
             0xFA,
             0xF8,
         )
+
+
+# --- the rendering itself, which the drift test cannot see ---------------------------------------
+
+
+@pytest.mark.parametrize("name", sorted(figures.HTML_DIAGRAMS))
+def test_the_committed_diagram_resolves_every_style(name: str) -> None:
+    """No class is left undefined and no ``var()`` unresolved in a committed drawing.
+
+    This is the hole ``test_the_committed_diagram_matches_its_page`` cannot cover. That test asks
+    whether the committed SVG is what the page *currently* draws, so it catches an edited page — but
+    a drawing that is uniformly, identically wrong matches itself perfectly and sails through. Both
+    pipeline diagrams shipped that way: styled by classes the extractor left behind in the page,
+    every fill fell back to the SVG default of solid black, and a sheet of black rectangles is
+    legible enough at thumbnail size to look deliberate.
+
+    So the two failure modes are asserted directly. A class with no rule renders black; a ``var()``
+    that reaches the file renders black too, because librsvg does not implement custom properties.
+    """
+    committed = paths.FIGURES_DIR / f"{name}.svg"
+    if not committed.exists():
+        pytest.skip(f"{committed} not built; run: uv run python -m rental_ranking.figures")
+    drawing = committed.read_text(encoding="utf-8")
+
+    assert "var(" not in drawing, (
+        f"{committed.name} still carries an unresolved var(); librsvg renders those as solid "
+        "black. figures.flatten_custom_properties should have substituted it"
+    )
+
+    styled = set(re.findall(r'class="([^"]+)"', drawing))
+    used = {name for value in styled for name in value.split()}
+    # Every block, not the first: a drawing that carries its own <style> ends up with two, the
+    # page's rules and its own, and its own are the ones defining most of its vocabulary.
+    stylesheets = "\n".join(re.findall(r"<style.*?</style>", drawing, re.DOTALL))
+    defined = set(re.findall(r"\.([\w-]+)", stylesheets))
+    assert used <= defined, (
+        f"{committed.name} uses classes with no rule in its own <style>: {sorted(used - defined)}. "
+        "They render as the SVG default of solid black"
+    )
+
+
+def test_a_drawing_styled_only_by_the_page_still_carries_its_rules(tmp_path: Path) -> None:
+    """The page's stylesheet travels with the drawing when the drawing has none of its own."""
+    source = tmp_path / "styled.html"
+    source.write_text(
+        "<style>:root { --ink: #336699; }\n.box { fill: var(--ink); }</style>\n"
+        '<svg viewBox="0 0 100 50"><rect class="box" x="0" y="0" width="100" height="50"/></svg>',
+        encoding="utf-8",
+    )
+
+    drawing = figures.extract_html_diagram(source, tmp_path / "out", "styled")["svg"].read_text()
+
+    assert ".box" in drawing, "the page's rule for a class the drawing uses was left behind"
+    assert "#336699" in drawing and "var(" not in drawing, "the custom property was not flattened"

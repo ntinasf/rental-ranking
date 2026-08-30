@@ -1,6 +1,18 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns:xlink="http://www.w3.org/1999/xlink" width="1240" height="922" viewBox="0 0 1240 922" xmlns="http://www.w3.org/2000/svg" role="img"
      aria-label="Traffic split diagram for the large-area search experiment">
+<style><![CDATA[
+body { margin:0; background:#fbfaf8; color:#1c1a17;
+         font:15px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif; }
+  .page { max-width:1300px; margin:0 auto; padding:34px 30px 46px; }
+  h1 { font-size:21px; margin:0 0 4px; letter-spacing:-.01em; }
+  .sub { color:#6b665e; font-size:14px; margin:0 0 6px; }
+  .meta { color:#6b665e; font-size:12.5px; margin:0 0 22px; }
+  .meta b { color:#1c1a17; font-weight:600; }
+  svg { display:block; width:100%; height:auto; }
+  .note { margin-top:20px; color:#6b665e; font-size:12.5px; max-width:105ch; }
+  .note b { color:#1c1a17; }
+]]></style>
   <defs>
     <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
       <path d="M0,0 L10,5 L0,10 z" fill="#8b857c"/>
