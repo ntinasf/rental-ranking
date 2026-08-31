@@ -47,7 +47,7 @@ Both are measured in §10.
 8. [How it scores](#8-how-it-scores)
 9. [Five checks before trusting the result](#9-five-checks-before-trusting-the-result)
 10. [Where it fails](#10-where-it-fails)
-11. [The experiment we designed and did not run](#11-the-experiment-we-designed-and-did-not-run)
+11. [The experiment designed and not run](#11-the-experiment-designed-and-not-run)
 12. [Limitations](#12-limitations)
 
 ---
@@ -461,7 +461,7 @@ has to be measured on purpose, because the headline number will read the same ei
 
 ---
 
-## 11. The experiment we designed and did not run
+## 11. The experiment designed and not run
 
 Everything above is offline. The honest answer to "how would you know this works in a product" is an
 experiment, and [`docs/ab_test_design.md`](ab_test_design.md) is that experiment, specified in full
